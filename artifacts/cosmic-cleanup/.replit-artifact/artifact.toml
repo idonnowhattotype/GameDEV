@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Cosmic Cleanup"
+version = "1.0.0"
+id = "artifacts/cosmic-cleanup"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22672
+
+[services.development]
+run = "pnpm --filter @workspace/cosmic-cleanup run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/cosmic-cleanup", "run", "build" ]
+publicDir = "artifacts/cosmic-cleanup/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22672"
+BASE_PATH = "/"

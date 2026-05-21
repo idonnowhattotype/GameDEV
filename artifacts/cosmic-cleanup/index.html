@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cosmic Cleanup: The Space Janitor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.88.2/dist/phaser.min.js"></script>
+  <script>
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AUDIO HELPERS — generate sounds procedurally using Web Audio API
+  // ─────────────────────────────────────────────────────────────────────────────
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  let audioCtx = null;
+
+  /** Lazily create (or resume) the shared AudioContext after a user gesture. */
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new AudioCtx();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  /** Play a simple beep tone for a given duration. */
+  function playTone(frequency, duration, type = 'sine', gainVal = 0.3) {
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = type;
+      osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+      gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    } catch (e) { /* silently ignore audio errors */ }
+  }
+
+  /** Collect sound — bright rising chirp. */
+  function sfxCollect() {
+    playTone(600, 0.06, 'square', 0.25);
+    setTimeout(() => playTone(900, 0.08, 'square', 0.2), 40);
+  }
+
+  /** Hit/damage sound — low thud. */
+  function sfxHit() {
+    playTone(120, 0.15, 'sawtooth', 0.4);
+    setTimeout(() => playTone(80, 0.15, 'sawtooth', 0.3), 50);
+  }
+
+  /** Power-up activation — ascending sweep. */
+  function sfxPowerup() {
+    [300, 500, 700, 1000].forEach((f, i) => {
+      setTimeout(() => playTone(f, 0.12, 'sine', 0.3), i * 60);
+    });
+  }
+
+  /** Ambient background drone — looping tone cluster. */
+  function startAmbient() {
+    try {
+      const ctx = getAudioCtx();
+      const freqs = [55, 110, 165];
+      freqs.forEach(f => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, ctx.currentTime);
+        gain.gain.setValueAtTime(0.04, ctx.currentTime);
+        osc.start();
+        // Keep a reference so we can stop it
+        ctx._ambientOscillators = ctx._ambientOscillators || [];
+        ctx._ambientOscillators.push(osc);
+      });
+    } catch (e) { /* silently ignore */ }
+  }
+
+  function stopAmbient() {
+    try {
+      if (audioCtx && audioCtx._ambientOscillators) {
+        audioCtx._ambientOscillators.forEach(osc => { try { osc.stop(); } catch(e){} });
+        audioCtx._ambientOscillators = [];
+      }
+    } catch (e) { /* silently ignore */ }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // TEXTURE HELPERS — draw all sprites procedurally with Graphics API
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Create all game textures using Phaser's Graphics API.
+   * Called once in GameScene.preload / create so textures are ready before use.
+   */
+  function createTextures(scene) {
+    // ── Player ship: sleek white triangle with blue accent ──────────────────
+    if (!scene.textures.exists('ship')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xffffff, 1);
+      g.fillTriangle(0, -22, -14, 14, 14, 14);
+      g.fillStyle(0x44aaff, 1);
+      g.fillRect(-5, 6, 10, 8);
+      g.generateTexture('ship', 32, 40);
+      g.destroy();
+    }
+
+    // ── Debris: small irregular grey polygon ─────────────────────────────────
+    if (!scene.textures.exists('debris')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xaaaaaa, 1);
+      g.fillPoints([
+        { x: 0, y: -10 }, { x: 7, y: -5 }, { x: 9, y: 4 },
+        { x: 3, y: 10 },  { x: -6, y: 9 }, { x: -10, y: 1 },
+        { x: -7, y: -7 }
+      ], true);
+      g.fillStyle(0x888888, 1);
+      g.fillCircle(2, 1, 3);
+      g.generateTexture('debris', 24, 24);
+      g.destroy();
+    }
+
+    // ── Rogue satellite: red diamond ─────────────────────────────────────────
+    if (!scene.textures.exists('satellite')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xff2222, 1);
+      g.fillPoints([
+        { x: 0, y: -16 }, { x: 14, y: 0 },
+        { x: 0, y: 16 },  { x: -14, y: 0 }
+      ], true);
+      g.fillStyle(0xff6666, 1);
+      g.fillRect(-4, -4, 8, 8);
+      g.lineStyle(2, 0xff4444, 1);
+      g.strokePoints([
+        { x: 0, y: -16 }, { x: 14, y: 0 },
+        { x: 0, y: 16 },  { x: -14, y: 0 }
+      ], true);
+      g.generateTexture('satellite', 32, 36);
+      g.destroy();
+    }
+
+    // ── Shield power-up: blue circle with S ──────────────────────────────────
+    if (!scene.textures.exists('powerup_shield')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0x0066ff, 0.85);
+      g.fillCircle(14, 14, 13);
+      g.lineStyle(3, 0x88ccff, 1);
+      g.strokeCircle(14, 14, 13);
+      g.generateTexture('powerup_shield', 28, 28);
+      g.destroy();
+    }
+
+    // ── Vacuum power-up: yellow star ─────────────────────────────────────────
+    if (!scene.textures.exists('powerup_vacuum')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xffcc00, 1);
+      // Draw a 5-point star
+      const cx = 14, cy = 14, outerR = 13, innerR = 6;
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI / 5) * i - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+      }
+      g.fillPoints(pts, true);
+      g.lineStyle(2, 0xffffff, 0.6);
+      g.strokePoints(pts, true);
+      g.generateTexture('powerup_vacuum', 28, 28);
+      g.destroy();
+    }
+
+    // ── Heart icon for health HUD ─────────────────────────────────────────────
+    if (!scene.textures.exists('heart')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xff3355, 1);
+      g.fillCircle(6, 5, 5);
+      g.fillCircle(14, 5, 5);
+      g.fillTriangle(1, 7, 19, 7, 10, 18);
+      g.generateTexture('heart', 20, 20);
+      g.destroy();
+    }
+
+    // ── Thruster particle: small orange dot ───────────────────────────────────
+    if (!scene.textures.exists('particle')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xff8800, 1);
+      g.fillCircle(4, 4, 4);
+      g.generateTexture('particle', 8, 8);
+      g.destroy();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // MENU SCENE
+  // ─────────────────────────────────────────────────────────────────────────────
+  class MenuScene extends Phaser.Scene {
+    constructor() { super({ key: 'MenuScene' }); }
+
+    /** Build the main menu with title, blurb, and Start button. */
+    create() {
+      const { width, height } = this.scale;
+
+      // Starfield background
+      createStarfield(this, width, height);
+
+      // Glow title text
+      this.add.text(width / 2, 120, '🌌 COSMIC CLEANUP', {
+        font: 'bold 42px Courier New',
+        fill: '#66ddff',
+        stroke: '#003366',
+        strokeThickness: 6,
+        shadow: { color: '#00aaff', blur: 20, fill: true }
+      }).setOrigin(0.5);
+
+      this.add.text(width / 2, 175, 'The Space Janitor', {
+        font: '22px Courier New',
+        fill: '#aaddff',
+      }).setOrigin(0.5);
+
+      // Storyline blurb
+      const blurb = [
+        '"A VIP space cruiser is arriving.',
+        'Clean up Earth\'s orbit before it docks."'
+      ].join('\n');
+      this.add.text(width / 2, 260, blurb, {
+        font: '16px Courier New',
+        fill: '#cceecc',
+        align: 'center',
+        lineSpacing: 8
+      }).setOrigin(0.5);
+
+      // Controls hint
+      this.add.text(width / 2, 340, 'CONTROLS: WASD or Arrow Keys', {
+        font: '14px Courier New',
+        fill: '#88aacc'
+      }).setOrigin(0.5);
+
+      this.add.text(width / 2, 365, 'Collect 15 debris pieces in 60 seconds', {
+        font: '14px Courier New',
+        fill: '#88aacc'
+      }).setOrigin(0.5);
+
+      // Start button
+      const btn = this.add.text(width / 2, 450, '[ START MISSION ]', {
+        font: 'bold 28px Courier New',
+        fill: '#ffffff',
+        backgroundColor: '#003388',
+        padding: { x: 20, y: 12 },
+        stroke: '#0066ff',
+        strokeThickness: 3
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+      // Hover effects
+      btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#0055cc' }));
+      btn.on('pointerout', () => btn.setStyle({ backgroundColor: '#003388' }));
+      btn.on('pointerdown', () => {
+        getAudioCtx(); // unlock audio context on click
+        startAmbient();
+        this.scene.start('GameScene');
+      });
+
+      // Pulse animation on button
+      this.tweens.add({
+        targets: btn,
+        scaleX: 1.05,
+        scaleY: 1.05,
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Draw a little ship graphic in the menu
+      createTextures(this);
+      const ship = this.add.image(width / 2, 540, 'ship').setScale(2);
+      this.tweens.add({
+        targets: ship,
+        y: 530,
+        duration: 1200,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GAME SCENE
+  // ─────────────────────────────────────────────────────────────────────────────
+  class GameScene extends Phaser.Scene {
+    constructor() { super({ key: 'GameScene' }); }
+
+    /** Initialise state variables for a fresh game. */
+    init() {
+      this.score = 0;
+      this.health = 3;
+      this.debrisCollected = 0;
+      this.totalDebris = 15;
+      this.timeLeft = 60;
+      this.shieldActive = false;
+      this.vacuumActive = false;
+      this.shieldTimer = 0;
+      this.vacuumTimer = 0;
+      this.invincibleFlash = false;
+      this.hitCooldown = 0;
+    }
+
+    /** Phaser preload hook — create all textures before game starts. */
+    preload() {
+      createTextures(this);
+    }
+
+    /** Set up all game objects, physics groups, HUD, and timers. */
+    create() {
+      const { width, height } = this.scale;
+
+      // ── Scrolling star-field background ────────────────────────────────────
+      this.stars = createStarfield(this, width, height, true);
+
+      // ── Player ship with Arcade Physics ────────────────────────────────────
+      this.player = this.physics.add.image(width / 2, height / 2, 'ship');
+      this.player.setCollideWorldBounds(true);
+      this.player.setDrag(120);          // drag creates zero-gravity feel
+      this.player.setMaxVelocity(280);
+
+      // ── Thruster particle emitter ───────────────────────────────────────────
+      this.thrusterEmitter = this.add.particles(0, 0, 'particle', {
+        lifespan: 220,
+        speed: { min: 40, max: 90 },
+        scale: { start: 0.9, end: 0 },
+        alpha: { start: 0.85, end: 0 },
+        tint: [0xff8800, 0xff4400, 0xffdd00],
+        blendMode: 'ADD',
+        emitting: false
+      });
+
+      // ── Debris group (15 pieces) ────────────────────────────────────────────
+      this.debrisGroup = this.physics.add.group();
+      for (let i = 0; i < this.totalDebris; i++) {
+        const x = Phaser.Math.Between(40, width - 40);
+        const y = Phaser.Math.Between(80, height - 40);
+        const piece = this.debrisGroup.create(x, y, 'debris');
+        piece.setBounce(1);
+        piece.setCollideWorldBounds(true);
+        // Random slow drift in any direction
+        const speed = Phaser.Math.Between(20, 65);
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        piece.setVelocity(
+          Math.cos(angle) * speed,
+          Math.sin(angle) * speed
+        );
+        piece.setAngularVelocity(Phaser.Math.Between(-40, 40));
+      }
+
+      // ── Rogue satellites (2) ────────────────────────────────────────────────
+      this.satellites = this.physics.add.group();
+      for (let i = 0; i < 2; i++) {
+        // Spawn at opposing corners so they don't start on top of player
+        const sx = i === 0 ? 60 : width - 60;
+        const sy = i === 0 ? 60 : height - 60;
+        const sat = this.satellites.create(sx, sy, 'satellite');
+        sat.setBounce(0.6);
+        sat.setCollideWorldBounds(true);
+        sat.setMaxVelocity(110);
+        sat.setAngularVelocity(60);
+      }
+
+      // ── Power-ups (2) ───────────────────────────────────────────────────────
+      this.powerups = this.physics.add.staticGroup();
+      this._spawnPowerup('powerup_shield');
+      this._spawnPowerup('powerup_vacuum');
+
+      // ── Shield glow effect sprite (follows player when shield is on) ────────
+      const g = this.add.graphics();
+      g.lineStyle(3, 0x44aaff, 1);
+      g.strokeCircle(22, 22, 22);
+      g.fillStyle(0x0044ff, 0.15);
+      g.fillCircle(22, 22, 22);
+      g.generateTexture('shield_fx', 44, 44);
+      g.destroy();
+      this.shieldFx = this.add.image(0, 0, 'shield_fx').setVisible(false).setScale(1.5);
+
+      // ── Overlap: player ↔ debris ────────────────────────────────────────────
+      this.physics.add.overlap(
+        this.player, this.debrisGroup,
+        this._collectDebris, null, this
+      );
+
+      // ── Overlap: satellite ↔ debris (scatter) ──────────────────────────────
+      this.physics.add.collider(
+        this.satellites, this.debrisGroup,
+        this._scatterDebris, null, this
+      );
+
+      // ── Collider: satellite ↔ player (damage) ──────────────────────────────
+      this.physics.add.collider(
+        this.player, this.satellites,
+        this._playerHit, null, this
+      );
+
+      // ── Overlap: player ↔ power-ups ────────────────────────────────────────
+      this.physics.add.overlap(
+        this.player, this.powerups,
+        this._collectPowerup, null, this
+      );
+
+      // ── Keyboard input ──────────────────────────────────────────────────────
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.wasd = this.input.keyboard.addKeys({
+        up: Phaser.Input.Keyboard.KeyCodes.W,
+        down: Phaser.Input.Keyboard.KeyCodes.S,
+        left: Phaser.Input.Keyboard.KeyCodes.A,
+        right: Phaser.Input.Keyboard.KeyCodes.D,
+      });
+
+      // ── Countdown timer (fires every second) ───────────────────────────────
+      this.gameTimer = this.time.addEvent({
+        delay: 1000,
+        callback: this._tickTimer,
+        callbackScope: this,
+        repeat: 59
+      });
+
+      // ── HUD ─────────────────────────────────────────────────────────────────
+      this._buildHUD();
+
+      // ── Camera does NOT scroll; HUD is fixed ───────────────────────────────
+      // (camera stays at default, everything is in world space matching screen)
+    }
+
+    // ── UPDATE LOOP ────────────────────────────────────────────────────────────
+    update(time, delta) {
+      const dt = delta / 1000;
+
+      // Scroll stars
+      this._scrollStars();
+
+      // Player movement
+      this._handleInput(dt);
+
+      // Satellite AI: each satellite chases the player
+      this._updateSatellites(dt);
+
+      // Update active power-up timers
+      this._updatePowerups(dt);
+
+      // Shield FX follows player
+      if (this.shieldActive) {
+        this.shieldFx.setPosition(this.player.x, this.player.y);
+      }
+
+      // Super vacuum magnet: nudge nearby debris toward player
+      if (this.vacuumActive) {
+        this._applyVacuumMagnet();
+      }
+
+      // Hit cooldown countdown
+      if (this.hitCooldown > 0) {
+        this.hitCooldown -= dt;
+        // Flash player while invincible
+        this.player.setAlpha(Math.sin(time * 0.02) > 0 ? 1 : 0.3);
+      } else {
+        this.player.setAlpha(1);
+      }
+
+      // Update HUD text
+      this._updateHUD();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INPUT HANDLING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Read keyboard state and apply thrust forces to the player ship. */
+    _handleInput(dt) {
+      const thrust = 340;
+      const up    = this.cursors.up.isDown    || this.wasd.up.isDown;
+      const down  = this.cursors.down.isDown  || this.wasd.down.isDown;
+      const left  = this.cursors.left.isDown  || this.wasd.left.isDown;
+      const right = this.cursors.right.isDown || this.wasd.right.isDown;
+
+      let vx = 0, vy = 0;
+      if (up)    vy = -1;
+      if (down)  vy =  1;
+      if (left)  vx = -1;
+      if (right) vx =  1;
+
+      // Normalise diagonal movement
+      if (vx !== 0 && vy !== 0) { vx *= 0.707; vy *= 0.707; }
+
+      const moving = vx !== 0 || vy !== 0;
+
+      if (moving) {
+        this.player.setAcceleration(vx * thrust, vy * thrust);
+        // Rotate ship to face direction of movement
+        const targetAngle = Math.atan2(vy, vx) + Math.PI / 2;
+        this.player.setRotation(
+          Phaser.Math.Angle.RotateTo(this.player.rotation, targetAngle, 0.14)
+        );
+      } else {
+        this.player.setAcceleration(0, 0);
+      }
+
+      // Emit thruster particles at the back of the ship when moving
+      if (moving) {
+        const angle = this.player.rotation - Math.PI / 2;
+        const ex = this.player.x - Math.cos(angle + Math.PI / 2) * 0;
+        const ey = this.player.y - Math.sin(angle + Math.PI / 2) * 0;
+        this.thrusterEmitter.setPosition(
+          this.player.x + Math.cos(this.player.rotation + Math.PI) * 12,
+          this.player.y + Math.sin(this.player.rotation + Math.PI) * 12
+        );
+        this.thrusterEmitter.explode(3);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SATELLITE AI
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Move each satellite toward the player using a simple seek behaviour. */
+    _updateSatellites(dt) {
+      const satSpeed = 95;
+      this.satellites.getChildren().forEach(sat => {
+        const dx = this.player.x - sat.x;
+        const dy = this.player.y - sat.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 1) {
+          sat.setVelocity(
+            (dx / dist) * satSpeed,
+            (dy / dist) * satSpeed
+          );
+        }
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POWER-UP LOGIC
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Count down active power-up durations and deactivate when expired. */
+    _updatePowerups(dt) {
+      if (this.shieldActive) {
+        this.shieldTimer -= dt;
+        if (this.shieldTimer <= 0) {
+          this.shieldActive = false;
+          this.shieldFx.setVisible(false);
+          this.player.clearTint();
+        }
+      }
+      if (this.vacuumActive) {
+        this.vacuumTimer -= dt;
+        if (this.vacuumTimer <= 0) {
+          this.vacuumActive = false;
+          this.player.clearTint();
+        }
+      }
+    }
+
+    /** Pull nearby debris pieces toward the player (Super Vacuum magnet). */
+    _applyVacuumMagnet() {
+      const radius = 160; // doubled from default ~80 natural overlap radius
+      const pullStrength = 200;
+      this.debrisGroup.getChildren().forEach(d => {
+        const dx = this.player.x - d.x;
+        const dy = this.player.y - d.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < radius && dist > 1) {
+          const nx = dx / dist;
+          const ny = dy / dist;
+          d.setVelocity(
+            d.body.velocity.x + nx * pullStrength * 0.06,
+            d.body.velocity.y + ny * pullStrength * 0.06
+          );
+        }
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // COLLISION CALLBACKS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Called when the player overlaps a debris piece — collect it. */
+    _collectDebris(player, piece) {
+      piece.destroy();
+      this.score += 10;
+      this.debrisCollected++;
+      sfxCollect();
+
+      // Tiny score pop text
+      const pop = this.add.text(piece.x, piece.y - 10, '+10', {
+        font: 'bold 14px Courier New',
+        fill: '#ffff44'
+      }).setOrigin(0.5);
+      this.tweens.add({
+        targets: pop,
+        y: pop.y - 30,
+        alpha: 0,
+        duration: 700,
+        onComplete: () => pop.destroy()
+      });
+
+      // Check win condition
+      if (this.debrisCollected >= this.totalDebris) {
+        this._endGame(true);
+      }
+    }
+
+    /** Called when a satellite hits a debris piece — scatter debris away. */
+    _scatterDebris(satellite, piece) {
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const speed = Phaser.Math.Between(80, 150);
+      piece.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    }
+
+    /** Called when a satellite collides with the player — deal damage. */
+    _playerHit(player, satellite) {
+      // Ignore if shield active or hit cooldown not expired
+      if (this.shieldActive || this.hitCooldown > 0) return;
+
+      this.health--;
+      this.hitCooldown = 1.5; // 1.5 second invincibility window
+      sfxHit();
+
+      // Knock satellite away from the player
+      const dx = satellite.x - player.x;
+      const dy = satellite.y - player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      satellite.setVelocity((dx / dist) * 250, (dy / dist) * 250);
+
+      // Flash camera red briefly
+      this.cameras.main.flash(200, 200, 0, 0, false);
+
+      // Update health HUD
+      this._updateHealthIcons();
+
+      if (this.health <= 0) {
+        this._endGame(false);
+      }
+    }
+
+    /** Called when the player overlaps a power-up. */
+    _collectPowerup(player, pu) {
+      sfxPowerup();
+      const type = pu.texture.key;
+      pu.destroy();
+
+      if (type === 'powerup_shield') {
+        this.shieldActive = true;
+        this.shieldTimer = 5;
+        this.shieldFx.setVisible(true);
+        this.shieldFx.setPosition(player.x, player.y);
+        player.setTint(0x4488ff);
+        this._showStatusMsg('SHIELD ACTIVE — 5s', '#66bbff');
+      } else if (type === 'powerup_vacuum') {
+        this.vacuumActive = true;
+        this.vacuumTimer = 5;
+        player.setTint(0xffdd00);
+        this._showStatusMsg('SUPER VACUUM — 5s', '#ffee44');
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TIMER
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Fires every second; reduces timeLeft and checks loss condition. */
+    _tickTimer() {
+      this.timeLeft = Math.max(0, this.timeLeft - 1);
+      if (this.timeLeft <= 0 && this.debrisCollected < this.totalDebris) {
+        this._endGame(false);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HUD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Create all HUD text objects at the top of the screen. */
+    _buildHUD() {
+      const style = { font: 'bold 16px Courier New', fill: '#ffffff' };
+
+      // Score
+      this.hudScore = this.add.text(12, 10, 'SCORE: 0', style).setDepth(10);
+
+      // Timer
+      this.hudTimer = this.add.text(330, 10, 'TIME: 60', {
+        ...style,
+        fill: '#88ffcc'
+      }).setOrigin(0.5, 0).setDepth(10);
+
+      // Debris counter
+      this.hudDebris = this.add.text(588, 10, 'DEBRIS: 0 / 15', style).setDepth(10);
+
+      // Health icons — rendered as image sprites
+      this.healthIcons = [];
+      this._buildHealthIcons();
+
+      // Power-up status row
+      this.hudStatus = this.add.text(this.scale.width / 2, 46, '', {
+        font: '14px Courier New',
+        fill: '#ffff66',
+        align: 'center'
+      }).setOrigin(0.5, 0).setDepth(10);
+
+      // HUD background bar
+      const bar = this.add.graphics().setDepth(9);
+      bar.fillStyle(0x000000, 0.55);
+      bar.fillRect(0, 0, this.scale.width, 66);
+    }
+
+    /** Rebuild health icon sprites based on current health value. */
+    _buildHealthIcons() {
+      this.healthIcons.forEach(ic => ic.destroy());
+      this.healthIcons = [];
+      for (let i = 0; i < this.health; i++) {
+        this.healthIcons.push(
+          this.add.image(this.scale.width - 30 - i * 26, 20, 'heart').setDepth(10)
+        );
+      }
+    }
+
+    /** Rebuild health icons after taking damage. */
+    _updateHealthIcons() {
+      this._buildHealthIcons();
+    }
+
+    /** Refresh dynamic HUD text each frame. */
+    _updateHUD() {
+      this.hudScore.setText('SCORE: ' + this.score);
+      this.hudTimer.setText('TIME: ' + String(this.timeLeft).padStart(2, '0'));
+      if (this.timeLeft <= 10) {
+        this.hudTimer.setStyle({ fill: '#ff4444', font: 'bold 16px Courier New' });
+      }
+      this.hudDebris.setText(`DEBRIS: ${this.debrisCollected} / ${this.totalDebris}`);
+    }
+
+    /** Show a brief status message near the top-centre of the screen. */
+    _showStatusMsg(msg, color = '#ffffff') {
+      this.hudStatus.setText(msg).setColor(color);
+      this.time.delayedCall(5000, () => {
+        if (this.hudStatus) this.hudStatus.setText('');
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SCROLLING STAR-FIELD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Scroll all star dots downward and wrap them to the top. */
+    _scrollStars() {
+      if (!this.starDots) return;
+      const h = this.scale.height;
+      this.starDots.forEach(dot => {
+        dot.y += dot.speed;
+        if (dot.y > h) {
+          dot.y = 0;
+          dot.x = Phaser.Math.Between(0, this.scale.width);
+        }
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POWER-UP SPAWNING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Spawn a power-up at a random position away from the screen edges. */
+    _spawnPowerup(textureKey) {
+      const { width, height } = this.scale;
+      const x = Phaser.Math.Between(60, width - 60);
+      const y = Phaser.Math.Between(90, height - 40);
+      const pu = this.powerups.create(x, y, textureKey);
+      // Gentle pulsing scale animation to make it visible
+      this.tweens.add({
+        targets: pu,
+        scaleX: 1.3,
+        scaleY: 1.3,
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GAME OVER
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Stop timers, ambient audio, and transition to the GameOver scene. */
+    _endGame(won) {
+      this.gameTimer.remove();
+      stopAmbient();
+      this.physics.pause();
+
+      // Brief delay then switch scene
+      this.time.delayedCall(600, () => {
+        this.scene.start('GameOverScene', {
+          won,
+          score: this.score
+        });
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GAME OVER SCENE
+  // ─────────────────────────────────────────────────────────────────────────────
+  class GameOverScene extends Phaser.Scene {
+    constructor() { super({ key: 'GameOverScene' }); }
+
+    /** Receive won/score data from GameScene. */
+    init(data) {
+      this.won = data.won;
+      this.finalScore = data.score;
+    }
+
+    /** Display win/loss result, final score, and Restart button. */
+    create() {
+      const { width, height } = this.scale;
+
+      createStarfield(this, width, height);
+
+      // Outcome heading
+      const outcomeText = this.won ? 'LEVEL CLEAR! 🎉' : 'MISSION FAILED';
+      const outcomeColor = this.won ? '#66ff88' : '#ff4444';
+
+      this.add.text(width / 2, 140, outcomeText, {
+        font: 'bold 44px Courier New',
+        fill: outcomeColor,
+        stroke: '#000000',
+        strokeThickness: 6,
+        shadow: { color: outcomeColor, blur: 30, fill: true }
+      }).setOrigin(0.5);
+
+      // Sub-message
+      const msg = this.won
+        ? 'Earth\'s orbit is clean!\nThe VIP cruiser is docking safely.'
+        : (this.won === false && this.finalScore < 0
+            ? 'Health depleted. Orbit still messy!'
+            : 'Time ran out. Orbit still messy!');
+      this.add.text(width / 2, 230, msg, {
+        font: '18px Courier New',
+        fill: '#cccccc',
+        align: 'center',
+        lineSpacing: 6
+      }).setOrigin(0.5);
+
+      // Final score
+      this.add.text(width / 2, 320, `FINAL SCORE: ${this.finalScore}`, {
+        font: 'bold 32px Courier New',
+        fill: '#ffdd44',
+        stroke: '#885500',
+        strokeThickness: 4
+      }).setOrigin(0.5);
+
+      // Stars rating (just for flavour)
+      const stars = this.finalScore >= 130 ? '★★★' :
+                    this.finalScore >= 70  ? '★★☆' : '★☆☆';
+      this.add.text(width / 2, 375, stars, {
+        font: '36px Courier New',
+        fill: '#ffcc00'
+      }).setOrigin(0.5);
+
+      // Restart button
+      const btn = this.add.text(width / 2, 460, '[ PLAY AGAIN ]', {
+        font: 'bold 26px Courier New',
+        fill: '#ffffff',
+        backgroundColor: '#223388',
+        padding: { x: 20, y: 12 },
+        stroke: '#4466ff',
+        strokeThickness: 3
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+      btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#0055cc' }));
+      btn.on('pointerout', () => btn.setStyle({ backgroundColor: '#223388' }));
+      btn.on('pointerdown', () => {
+        startAmbient();
+        this.scene.start('GameScene');
+      });
+
+      this.tweens.add({
+        targets: btn,
+        scaleX: 1.04,
+        scaleY: 1.04,
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Main menu link
+      const menuBtn = this.add.text(width / 2, 530, '[ MAIN MENU ]', {
+        font: '18px Courier New',
+        fill: '#8899cc',
+        padding: { x: 10, y: 6 }
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      menuBtn.on('pointerover', () => menuBtn.setStyle({ fill: '#aabbff' }));
+      menuBtn.on('pointerout', () => menuBtn.setStyle({ fill: '#8899cc' }));
+      menuBtn.on('pointerdown', () => this.scene.start('MenuScene'));
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SHARED UTILITY: STAR-FIELD
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Draw a static or scrollable star-field background.
+   * If `dynamic` is true, stores dot objects on scene.starDots for scrolling.
+   */
+  function createStarfield(scene, width, height, dynamic = false) {
+    const count = dynamic ? 160 : 200;
+    // Deep space gradient rect
+    const bg = scene.add.graphics();
+    bg.fillGradientStyle(0x000011, 0x000011, 0x000022, 0x000033, 1);
+    bg.fillRect(0, 0, width, height);
+
+    if (dynamic) {
+      scene.starDots = [];
+      const g = scene.add.graphics();
+      // We'll re-draw stars per-frame via Graphics — use simple rectangles
+      // Instead: use a RenderTexture to stamp static dots then scroll them
+      // For simplicity, create individual tiny Graphics objects
+      for (let i = 0; i < count; i++) {
+        const x = Phaser.Math.Between(0, width);
+        const y = Phaser.Math.Between(0, height);
+        const size = Math.random() < 0.15 ? 2 : 1;
+        const alpha = Phaser.Math.FloatBetween(0.3, 1.0);
+        const dot = scene.add.rectangle(x, y, size, size, 0xffffff, alpha);
+        dot.speed = Phaser.Math.FloatBetween(0.15, 0.6);
+        scene.starDots.push(dot);
+      }
+      g.destroy();
+    } else {
+      // Static stars for menu/gameover
+      const g = scene.add.graphics();
+      for (let i = 0; i < count; i++) {
+        const x = Phaser.Math.Between(0, width);
+        const y = Phaser.Math.Between(0, height);
+        const r = Math.random() < 0.1 ? 1.5 : 0.8;
+        const alpha = Phaser.Math.FloatBetween(0.4, 1.0);
+        g.fillStyle(0xffffff, alpha);
+        g.fillCircle(x, y, r);
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PHASER GAME CONFIG
+  // ─────────────────────────────────────────────────────────────────────────────
+  const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    parent: document.body,
+    backgroundColor: '#000011',
+    physics: {
+      default: 'arcade',
+      arcade: {
+        gravity: { x: 0, y: 0 },
+        debug: false
+      }
+    },
+    scene: [MenuScene, GameScene, GameOverScene]
+  };
+
+  // Centre the canvas in the browser window
+  const style = document.createElement('style');
+  style.textContent = `
+    canvas {
+      display: block;
+      margin: auto;
+      box-shadow: 0 0 40px #0044aa88;
+    }
+  `;
+  document.head.appendChild(style);
+
+  // Launch!
+  const game = new Phaser.Game(config);
+  </script>
+</body>
+</html>

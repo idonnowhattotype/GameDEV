@@ -1,0 +1,58 @@
+Build a complete, playable 2D browser-based arcade game using Phaser 3 (JavaScript). The game is called Cosmic Cleanup: The Space Janitor. Load Phaser 3 from the CDN. The entire game must run in a single index.html file with embedded JavaScript. Do not use any build tools or bundlers.
+Concept: The player controls a small janitor spaceship orbiting Earth. The goal is to collect all floating space debris before a 60-second timer runs out. The game takes place against a scrolling star-field background.
+Scenes to implement:
+
+A MenuScene with the game title, a brief storyline blurb ("A VIP space cruiser is arriving. Clean up Earth's orbit before it docks."), and a Start button.
+A GameScene containing all gameplay.
+A GameOverScene that displays either "Level Clear!" or "Mission Failed" depending on the outcome, along with the player's final score and a Restart button.
+
+Player ship:
+
+Controlled with WASD or arrow keys.
+The ship moves with slight drag/damping to simulate zero-gravity drifting.
+Animate the ship sprite with a thruster particle effect or animated frame when moving.
+
+Space debris (collectibles):
+
+Spawn 15 pieces of debris scattered randomly across the level at start.
+Each piece floats slowly and drifts in a random direction using Phaser Arcade Physics.
+When the player's ship overlaps a debris piece, it is collected, plays a short sound effect, and adds 10 points to the score.
+A HUD counter shows "Debris: X / 15" and updates in real time.
+
+Gameplay mechanics — implement all four:
+
+Physics-based interactions: All debris objects have velocity and bounce off the world bounds. The player ship uses Arcade Physics with drag.
+Enemy AI (Rogue Satellite): Spawn 2 rogue satellites. Each satellite slowly chases the player's position using a basic seek behaviour (calculate angle to player, set velocity toward them). If a rogue satellite collides with the player, the player loses 1 health point and the satellite bounces away. Rogue satellites also collide with and scatter debris on contact.
+Health system: The player starts with 3 health points displayed as icons (e.g., small ship icons or heart icons) in the HUD. Reaching 0 health triggers Game Over ("Mission Failed").
+Scoring system: Score increases by 10 per debris collected. Display the live score in the HUD. On the GameOverScene, display the final score.
+
+Power-ups:
+
+Spawn 2 power-ups at random positions.
+Shield (blue icon): Grants temporary invincibility for 5 seconds. Show a visual indicator on the ship (tint or glow).
+Super Vacuum (yellow icon): For 5 seconds, the debris collection radius doubles (use a larger overlap zone or magnet-pull logic that nudges nearby debris toward the player).
+
+Win / loss conditions:
+
+Win: All 15 debris collected before the timer reaches zero.
+Loss: Timer reaches zero with debris remaining, or player health reaches 0.
+
+Audio:
+
+Background music: Load a looping royalty-free space ambient track from a public CDN or use Phaser's built-in WebAudio to procedurally generate a simple looping drone. If loading external audio is unreliable, generate simple beep/tone sound effects using the Web Audio API directly.
+Sound effects: A collect sound on debris pickup, a hit sound on player damage, and a power-up activation sound.
+
+Visuals:
+
+Use Phaser's built-in Graphics API to draw all sprites procedurally if loading external image assets is unreliable in Replit — draw the player ship as a triangle, debris as small irregular polygons or circles, enemies as red diamond shapes, and power-ups as coloured icons.
+Scrolling star-field background: Create a particle emitter or a large group of small white dots moving slowly downward and wrapping.
+All HUD elements (score, timer, health, debris counter) must be positioned in the top portion of the screen and remain fixed regardless of camera movement.
+
+Code structure:
+
+Organise code into clearly named Phaser Scene classes: MenuScene, GameScene, GameOverScene.
+Add comments to every major function explaining what it does.
+The game canvas must be 800×600 pixels, centred in the browser window.
+Use physics: { default: 'arcade', arcade: { debug: false } } in the Phaser config.
+
+Make sure the game is fully playable from start to game-over with no console errors. All three scenes must be functional and transition correctly.
