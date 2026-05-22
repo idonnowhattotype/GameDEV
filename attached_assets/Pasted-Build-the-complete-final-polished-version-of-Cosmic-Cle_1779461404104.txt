@@ -1,0 +1,153 @@
+Build the complete, final, polished version of Cosmic Cleanup: The Space Janitor as a single index.html file using Phaser 3 loaded from CDN. No build tools. No external asset files. All visuals drawn with the Phaser Graphics API. All audio generated with the Web Audio API. The game must run fully in a browser with zero console errors.
+
+Project overview
+A 2D arcade space game. The player controls a janitor spaceship and must collect floating orbital debris before the timer runs out. Rogue enemy satellites chase the player. The game has 5 levels of increasing difficulty. It is built for desktop browser using keyboard controls.
+
+Scene structure
+Three scenes: MenuScene, GameScene, GameOverScene, LevelCompleteScene. Register all four in the Phaser game config. Use the Phaser game registry (this.registry) to store and share currentLevel (default 1) and totalScore (default 0) across scenes. Every restart must reset both values to their defaults and return to MenuScene.
+
+MenuScene
+
+Scrolling star-field background (white dots drifting slowly downward, wrapping at bottom).
+Background colour: deep navy #0a0a2e.
+Title: "COSMIC CLEANUP" in large bold font, bright cyan, centred near top third of screen.
+Subtitle: "The Space Janitor" in smaller white monospace font below the title.
+Story blurb: "A VIP space cruiser is arriving. Clean up Earth's orbit before it docks." in white, centred.
+Controls line: "CONTROLS: WASD or Arrow Keys — Collect all debris before time runs out" in small grey text.
+A styled "[ START MISSION ]" button (dark blue rectangle, cyan border, white text). On click or on spacebar press, transition to GameScene.
+Play ambient menu music on load (see Audio section). Stop it when transitioning to GameScene.
+
+
+GameScene — core loop
+Canvas size: 800 × 600. Use physics: { default: 'arcade', arcade: { debug: false } }.
+Background: Set background colour per level (see Level table). Render a static star-field of 120 small white dots at random positions, not animated, so the background feels like deep space without being distracting.
+HUD — fixed to camera, always readable:
+
+Top-left: SCORE label and value, white bold font, 18px. Behind a semi-transparent dark panel.
+Top-centre: Level name (LEVEL 1) in bold white 20px, and below it debris counter (4 / 15 debris) in smaller cyan text.
+Top-right: Timer in white 18px bold. Turns orange below 20 seconds. Turns red and pulses below 10 seconds. Shows remaining seconds with an s suffix. Health hearts drawn as proper red heart shapes (not emoji) immediately left of the timer.
+All HUD elements must sit inside a single semi-transparent dark rectangle spanning the full width of the screen at the top, 50px tall. Text must never be obscured by game objects.
+
+
+Player ship
+Drawing — draw entirely in local coordinate space using a dedicated Graphics object that is set as a child of the player container or redrawn each frame. The ship always points upward in local space. Phaser rotates the whole object to face movement direction. All coordinates below are in local space with origin at ship centre.
+
+Fuselage: Tall pentagon. Points: top (0, -19), upper-left (-7, -10), lower-left (-9, 10), lower-right (9, 10), upper-right (7, -10). Fill: steel blue #4a6fa5. Centre highlight stripe: a thin filled rectangle (-2, -18) to (2, 8) in lighter blue #8ab4f8.
+Wings: Left wing triangle: (-9, 4), (-22, 16), (-9, 16). Right wing triangle: (9, 4), (22, 16), (9, 16). Fill: mid-grey #778899. Border: #334455, 1px.
+Cockpit: Small filled ellipse centred at (0, -12), width 6, height 8. Fill: cyan #00ffff. White glint dot at (-1, -14), radius 1.5.
+Engine block: Filled rectangle from (-7, 10) to (7, 16). Fill: dark grey #222233. Two engine ports: circles at (-3, 15) and (3, 15), radius 2.5, fill black.
+
+Flame — drawn in local space, BEHIND ship body (draw flame first, then ship on top):
+
+The flame origin is at local y = +16 (bottom of engine block), centred on x = 0.
+Idle (no keys held): Two small flames at x = -3 and x = 3. Each is an ellipse: width 3, height 6, fill orange #ff6600, alpha 0.5. Alternate height between 5 and 7 each frame to flicker.
+Thrusting (any movement key held): Replace idle flames with two larger teardrop flames at same x positions. Draw as three stacked ellipses per engine port, all centred on that port's x: bottom ellipse (width 5, height 10, fill #ff6600), middle ellipse (width 4, height 18, fill #ffaa00), top ellipse (width 3, height 26, fill #ffff00). All extending downward in local space (positive y from origin at y=16).
+Boost (Super Vacuum active): Same as thrusting but extend all heights by 80%: bottom 18, middle 30, top 44. Add a fourth ellipse at top (width 2, height 52, fill electric blue #00aaff). Widen all widths by 30%.
+CRITICAL: The flame is drawn at local coordinates. Because the ship container rotates to face movement direction, the flame will automatically appear at the rear of the ship in world space regardless of direction. Never calculate world-space offsets for the flame. Draw it purely in local space.
+
+Movement:
+
+WASD and arrow keys. Apply force/velocity in the direction of the pressed key.
+Drag/damping: player.body.setDrag(300, 300) for zero-gravity drift feel.
+The ship rotates to face its current velocity direction. Use Math.atan2(body.velocity.y, body.velocity.x) + Math.PI / 2 and set as the container's rotation.
+Hard boundary — no wrapping: After updating position every frame, clamp: player.x = Phaser.Math.Clamp(player.x, 24, 776) and player.y = Phaser.Math.Clamp(player.y, 60, 576) (top margin accounts for HUD). When the ship hits a boundary edge, zero the corresponding velocity axis immediately.
+
+Health: Starts at 3. On hit from enemy: lose 1 health, apply camera shake (this.cameras.main.shake(200, 8)), flash ship red for 3 frames using setTint / clearTint, brief invincibility for 1.2 seconds. Health 0 → trigger game over.
+
+Space debris
+
+Spawn count per level: see Level table.
+Each piece is an irregular polygon with 7–9 vertices. Generate vertices by taking a base radius (12–18px, randomised per piece), then offsetting each vertex angle and radius slightly using seeded randomness so every piece looks different.
+Colours: 60% dark grey #666677 with lighter inner #aaaaaa, 40% rust-brown #8B5E3C. Apply per piece at spawn, not per frame.
+Each piece has a slow random initial velocity (speed 20–60) and rotates slowly (angularVelocity 10–40, random direction).
+Pieces use setCollideWorldBounds(false) and wrap around all four screen edges using Phaser.Math.Wrap on position each frame.
+On player overlap: collect, play collect sound, add 10 points (×2 if combo active), show score pop-up above the debris position, update debris counter.
+1 in 4 pieces has a glint: a tiny white circle (radius 2, alpha 0.6) that fades in and out on a sine wave.
+
+
+Enemy rogue satellites
+
+Spawn count per level: see Level table.
+Size: Central spiked body radius 22px. Spikes: 8 uneven points extending 10–18px from centre (randomise spike length per spike at spawn). Fill: dark red #660000 body, spike tips #cc0000.
+Two broken antenna arms: thin rectangles extending left and right from body, 18px long, 2px wide, grey #888, with a small gap drawn near the tip to look cracked.
+Pulsing danger beacon: a semi-transparent circle (radius 28, fill red, alpha oscillating 0.1–0.4 using sine wave on game time).
+AI: Each satellite seeks the player position. Every frame: calculate angle from satellite to player, apply velocity toward player at the level's enemy speed. Cap speed at the level value. When within 300px of player, increase pulse speed.
+On collision with player: deal 1 damage, satellite bounces away (reverse velocity, multiply by 0.6).
+Satellites wrap around screen edges the same as debris.
+Satellites collide with and scatter debris pieces on contact.
+Spawn warning: From Level 2 onward, when a satellite first enters the visible screen area from a wrap, show a red arrow indicator on the nearest screen edge pointing inward toward it for 1.5 seconds.
+
+
+Power-ups
+Spawn count per level: see Level table. Spawn at random positions avoiding the centre 200px zone.
+Shield (blue):
+
+Draw as a blue hexagon (radius 18, fill #003399, border #0066ff 2px).
+Inside: a proper shield shape — kite outline, flat top, sides curving to a point at bottom, drawn as a white 2px stroke path, no fill.
+Bob up and down using sine wave on y position (amplitude 4px, period 2 seconds). No rotation.
+On collect: 5 seconds of invincibility. Ship gets a cyan tint. Damage is ignored. Play shield sound.
+
+Super Vacuum (yellow):
+
+Draw as a yellow starburst (8 points, alternating outer radius 20 and inner radius 10, fill #ffcc00, border #ff9900).
+Small white dots (radius 2) orbit the starburst at radius 26, 4 dots evenly spaced, rotating clockwise.
+Bob up and down same as shield.
+On collect: 5 seconds of doubled debris collection radius. Show a dashed circle around the player (radius 80, dashed yellow stroke, alpha 0.4) for the duration. Play rocket boost sound.
+
+
+HUD overlays during gameplay
+
+Active power-up timer: A single line of text below the HUD bar, centred, showing e.g. SHIELD 3s or SUPER VACUUM 3s in the appropriate colour (cyan for shield, yellow for vacuum). Disappears when power-up expires. Do not show both simultaneously in a way that overlaps — stack them vertically if both are active.
+Score pop-ups: 20px bold white text with black 2px drop shadow. Spawns at the world position of the collected debris. Floats upward 40px over 0.8 seconds via tween, then fades and destroys. Never spawns at screen centre.
+Combo text: When a ×2 combo activates, show x2 COMBO! in 24px bold gold #ffd700 with black drop shadow, spawning directly above the player's current world position. Same float-and-fade tween. Do not position it at screen centre.
+Danger ring: When any enemy is within 180px of the player, draw a red circle outline (radius 52, stroke #ff0000, alpha oscillating 0.2–0.7, line width 1.5px) around the player. Width must be thin enough to not obscure the ship. Remove when no enemy is within range.
+Pause overlay: Press P or Escape to pause. Darken the screen with a semi-transparent black rectangle. Show PAUSED in large white centred text. Press same key to resume. Timer stops while paused.
+Controls reminder: Small semi-transparent text bottom-left WASD / Arrows to move. Fades out after 5 seconds using a tween.
+
+
+Combo system
+If the player collects 3 or more debris pieces within 4 seconds of each other, activate a ×2 score multiplier for 5 seconds. Track collection timestamps in an array. Reset the array after 4 seconds of no collection. Only one combo can be active at a time.
+
+Level system — 5 levels
+LevelDebrisTimerEnemiesEnemy speedPower-upsBackground11560s2602#0a0a2e21855s3802#0d0a2e32050s31003#0a1a2e42245s41202#1a0a0e52540s51403#1a0505
+Score carries over between levels. Health does not reset between levels.
+
+LevelCompleteScene
+
+Same star-field background as menu.
+Centred panel slides in from top over 0.4 seconds (tween y from -300 to centred).
+Shows: level number completed, time bonus calculation (Time Bonus: Xs × 5 = +Y pts in green), score so far (including time bonus), and next level preview (Next up — Level X: N debris • Xs • N enemies) in 18px text.
+"[ NEXT LEVEL ]" button. On click, increment currentLevel in registry, transition to GameScene.
+After Level 5 complete, button reads "[ MISSION COMPLETE ]" and transitions to GameOverScene with a victory state.
+
+
+GameOverScene
+
+Two states: Mission Failed (red title) or Mission Complete (gold title).
+Shows final total score and the level reached on failure.
+"[ RESTART ]" button resets currentLevel to 1 and totalScore to 0 in registry, transitions to MenuScene. Never skip MenuScene on restart.
+
+
+Audio — all Web Audio API, no external files
+Create a single AudioManager object instantiated once and passed between scenes or stored on the Phaser game registry. Only one music track plays at a time.
+
+playMenuMusic() — two sine oscillators at 80Hz and 120Hz, volume LFO at 0.1Hz. Loop indefinitely.
+playGameMusic() — three oscillators: 80Hz, 120Hz, 160Hz. LFO at 0.3Hz. Sub-bass pulse: 60Hz sine burst every 2 seconds. Loop indefinitely.
+stopMusic() — fade out current track over 0.3 seconds then stop.
+playCollectSound() — triangle wave, 440Hz for 0.05s then 880Hz for 0.1s, quick fade.
+playHitSound() — sawtooth wave, 200Hz sliding to 80Hz over 0.3s.
+playShieldSound() — sine arpeggio: 523Hz, 659Hz, 784Hz, each 0.12s.
+playBoostSound() — white noise buffer (2 seconds), lowpass filter at 800Hz Q 0.5, gain ramps 0→0.6 over 0.15s, holds 0.4s, ramps to 0.15 over 1s. Does not loop.
+playLevelCompleteSound() — four-note sine rise: 523Hz, 659Hz, 784Hz, 1047Hz, each 0.15s.
+playGameOverSound() — sine from 300Hz to 100Hz over 0.8s, slow fade.
+
+
+Code quality requirements
+
+Organise into clearly separated Scene classes with methods for create(), update(), and helper functions.
+Comment every major function and system.
+No global variable leaks — scope everything to scene or the AudioManager object.
+The game canvas is 800 × 600, centred in the browser window with a black page background.
+Zero console errors on load and during all five levels.
+All five levels must be completable and transition correctly.
+GameOverScene must always return to MenuScene on restart — never jump directly back to GameScene.

@@ -539,12 +539,13 @@
     constructor() { super({ key: 'MenuScene' }); }
 
     create() {
-      // Reset level + score in registry
+      // Reset all persistent state to defaults
       this.game.registry.set('currentLevel', 1);
       this.game.registry.set('score', 0);
+      this.game.registry.set('health', 3);
       this.game.registry.set('bgColor', 0x000011);
 
-      buildStarfield(this, false);
+      buildStarfield(this, true);   // scrolling starfield per spec
       buildTextures(this);
 
       const { width, height } = this.scale;
@@ -591,10 +592,20 @@
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#003388' }));
       btn.on('pointerdown', () => {
         AM._getCtx(); // unlock audio on first gesture
+        AM.stopMusic();
         AM.playGameMusic();
         this.scene.start('GameScene');
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
+
+      // Spacebar also starts the game
+      const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+      spaceKey.once('down', () => {
+        AM._getCtx();
+        AM.stopMusic();
+        AM.playGameMusic();
+        this.scene.start('GameScene');
+      });
 
       // Decorative ship bobbing at bottom
       const ship = this.add.image(width/2, 548, 'ship').setScale(2.2);
@@ -602,6 +613,17 @@
 
       // Start menu music
       AM.playMenuMusic();
+    }
+
+    /** Scroll the starfield downward each frame. */
+    update() {
+      if (this.starDots) {
+        const h = this.scale.height;
+        this.starDots.forEach(s => {
+          s.y += s._speed;
+          if (s.y > h + 2) s.y = -2;
+        });
+      }
     }
   }
 
@@ -617,8 +639,10 @@
       this._score      = this.game.registry.get('score')        || 0;
       this._cfg        = LEVELS[this._level - 1];
 
-      // Per-level state
-      this._health        = 3;
+      // Per-level state — health carries over between levels (resets to 3 only on level 1)
+      this._health        = (this._level === 1)
+                              ? 3
+                              : (this.game.registry.get('health') || 3);
       this._collected     = 0;
       this._timeLeft      = this._cfg.timer;
       this._shieldActive  = false;
@@ -719,6 +743,9 @@
       });
       this._keyP   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
       this._keyESC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+
+      // Guard flag to prevent double-ending the game
+      this._gameEnded = false;
 
       // ── Countdown timer ────────────────────────────────────────────────────
       this._gameTimer = this.time.addEvent({
@@ -1255,12 +1282,19 @@
         font: 'bold 20px "Courier New"', fill: '#ccffcc'
       }).setDepth(89).setOrigin(1, 0);
 
-      // Hearts (drawn as images, right of center-right)
+      // Hearts (drawn as images, left of timer area)
       this._heartImgs = [];
       for (let i = 0; i < 3; i++) {
-        const h = this.add.image(width - 100 + i * 26, 27, 'heart').setDepth(89).setScale(1.0);
+        const h = this.add.image(width - 114 + i * 26, 27, 'heart').setDepth(89).setScale(1.0);
         this._heartImgs.push(h);
       }
+
+      // Power-up active timer display — shown below HUD bar, centred
+      this._powerupLineTxt = this.add.text(width / 2, 54, '', {
+        font: 'bold 14px "Courier New"', fill: '#ffffff',
+        stroke: '#000000', strokeThickness: 3,
+        backgroundColor: '#00000099', padding: { x: 8, y: 3 }
+      }).setDepth(90).setOrigin(0.5, 0).setAlpha(0);
     }
 
     _updateHUD(time) {
@@ -1271,7 +1305,6 @@
       let timerColor = '#ccffcc';
       if (this._timeLeft <= 10) {
         timerColor = '#ff2222';
-        // Subtle pulse using alpha
         this._timerTxt.setAlpha(0.6 + 0.4 * Math.sin(time * 0.01));
       } else if (this._timeLeft <= 20) {
         timerColor = '#ffaa00';
@@ -1281,8 +1314,22 @@
       }
       this._timerTxt.setText(`${this._timeLeft}s`).setStyle({ fill: timerColor });
 
-      // Hearts — show/hide based on health
+      // Hearts — show/hide based on current health
       this._heartImgs.forEach((h, i) => h.setVisible(i < this._health));
+
+      // Power-up active timer line below HUD bar (stacked if both active)
+      const lines = [];
+      if (this._shieldActive)  lines.push({ text: `SHIELD  ${Math.ceil(this._shieldTimer)}s`,  color: '#44ccff' });
+      if (this._vacuumActive)  lines.push({ text: `SUPER VACUUM  ${Math.ceil(this._vacuumTimer)}s`, color: '#ffdd00' });
+
+      if (lines.length > 0) {
+        // Show first active (or both stacked via newline)
+        const combined = lines.map(l => l.text).join('   ');
+        const col = lines.length > 1 ? '#ffffff' : lines[0].color;
+        this._powerupLineTxt.setText(combined).setStyle({ fill: col }).setAlpha(1);
+      } else {
+        this._powerupLineTxt.setAlpha(0);
+      }
     }
 
     // ── PAUSE / RESUME ────────────────────────────────────────────────────────
@@ -1301,24 +1348,33 @@
 
     // ── END GAME ──────────────────────────────────────────────────────────────
     _endGame(won) {
+      if (this._gameEnded) return;   // prevent double-trigger
+      this._gameEnded = true;
+
       this._gameTimer.remove();
       this.physics.pause();
 
       if (won) {
         AM.playLevelCompleteSound();
+        // Persist score and health for next level
+        this.game.registry.set('score',  this._score);
+        this.game.registry.set('health', this._health);
         this.time.delayedCall(700, () => {
-          this.game.registry.set('score', this._score);
           if (this._level >= TOTAL_LEVELS) {
-            // All levels complete — true mission complete
+            // All five levels cleared — show victory screen
             this.scene.start('GameOverScene', { missionComplete: true, score: this._score });
           } else {
-            this.scene.start('LevelCompleteScene', { level: this._level, score: this._score, timeLeft: this._timeLeft });
+            this.scene.start('LevelCompleteScene', {
+              level: this._level, score: this._score, timeLeft: this._timeLeft
+            });
           }
         });
       } else {
         AM.playGameOverSound();
         this.time.delayedCall(600, () => {
-          this.scene.start('GameOverScene', { missionComplete: false, score: this._score, level: this._level });
+          this.scene.start('GameOverScene', {
+            missionComplete: false, score: this._score, level: this._level
+          });
         });
       }
     }
@@ -1343,10 +1399,11 @@
       AM.playMenuMusic();
 
       const { width, height } = this.scale;
-      const nextLevel  = this._level + 1;
-      const nextCfg    = LEVELS[nextLevel - 1];
-      const timeBonus  = this._timeLeft * 5;
-      const totalScore = this._score + timeBonus;
+      const isLastLevel = (this._level >= TOTAL_LEVELS);
+      const timeBonus   = this._timeLeft * 5;
+      const totalScore  = this._score + timeBonus;
+      const nextLevel   = this._level + 1;
+      const nextCfg     = isLastLevel ? null : LEVELS[nextLevel - 1];
 
       // ── Slide-in container — starts above screen, tweens to y=0 ─────────
       const container = this.add.container(0, -300);
@@ -1354,9 +1411,9 @@
       // Panel background
       const panelGfx = this.add.graphics();
       panelGfx.fillStyle(0x001133, 0.90);
-      panelGfx.fillRoundedRect(width/2 - 270, 90, 540, 430, 14);
-      panelGfx.lineStyle(2, 0x3366cc, 1);
-      panelGfx.strokeRoundedRect(width/2 - 270, 90, 540, 430, 14);
+      panelGfx.fillRoundedRect(width/2 - 270, 80, 540, 440, 14);
+      panelGfx.lineStyle(2, isLastLevel ? 0xffcc00 : 0x3366cc, 1);
+      panelGfx.strokeRoundedRect(width/2 - 270, 80, 540, 440, 14);
       container.add(panelGfx);
 
       const addText = (x, y, txt, style) => {
@@ -1365,54 +1422,73 @@
         return t;
       };
 
-      addText(width/2, 128, `LEVEL ${this._level} COMPLETE!`, {
-        font: 'bold 38px "Courier New"', fill: '#66ff88',
-        stroke: '#004422', strokeThickness: 5,
-        shadow: { color: '#00ff88', blur: 20, fill: true }
+      addText(width/2, 118, `LEVEL ${this._level} COMPLETE!`, {
+        font: 'bold 38px "Courier New"', fill: isLastLevel ? '#ffdd44' : '#66ff88',
+        stroke: isLastLevel ? '#664400' : '#004422', strokeThickness: 5,
+        shadow: { color: isLastLevel ? '#ffaa00' : '#00ff88', blur: 20, fill: true }
       });
 
-      addText(width/2, 195, `Score this level:`, {
+      addText(width/2, 185, `Score this level:`, {
         font: '17px "Courier New"', fill: '#aaddff'
       });
-      addText(width/2, 225, `${this._score}`, {
-        font: 'bold 36px "Courier New"', fill: '#ffdd44',
+      addText(width/2, 213, `${this._score}`, {
+        font: 'bold 34px "Courier New"', fill: '#ffdd44',
         stroke: '#664400', strokeThickness: 4
       });
 
       // Time Bonus calculation line
-      addText(width/2, 275,
+      addText(width/2, 260,
         `Time Bonus: ${this._timeLeft}s \u00d7 5 = +${timeBonus} pts`,
         { font: '17px "Courier New"', fill: '#66ff88' }
       );
 
       // Total score
-      addText(width/2, 308, `Total Score: ${totalScore}`, {
+      addText(width/2, 292, `Total Score: ${totalScore}`, {
         font: 'bold 26px "Courier New"', fill: '#ffee66',
         stroke: '#664400', strokeThickness: 3
       });
 
-      addText(width/2, 356, `Next up \u2014 Level ${nextLevel}`, {
-        font: '16px "Courier New"', fill: '#88aacc'
-      });
-      addText(width/2, 382,
-        `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`,
-        { font: '18px "Courier New"', fill: '#aabbdd' }
-      );
+      // Next level preview (only if not last level)
+      if (!isLastLevel) {
+        addText(width/2, 340, `Next up \u2014 Level ${nextLevel}`, {
+          font: '16px "Courier New"', fill: '#88aacc'
+        });
+        addText(width/2, 366,
+          `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`,
+          { font: '18px "Courier New"', fill: '#aabbdd' }
+        );
+      } else {
+        addText(width/2, 348, 'ALL 5 LEVELS CLEARED!', {
+          font: 'bold 22px "Courier New"', fill: '#ffcc00',
+          stroke: '#664400', strokeThickness: 3
+        });
+        addText(width/2, 378, 'Earth\'s orbit is spotless.', {
+          font: '16px "Courier New"', fill: '#aaffcc'
+        });
+      }
 
-      // Next Level button
-      const btn = this.add.text(width/2, 443, '[ NEXT LEVEL ]', {
-        font: 'bold 26px "Courier New"', fill: '#ffffff',
-        backgroundColor: '#004400', padding: { x:20, y:12 },
-        stroke: '#00cc44', strokeThickness: 3
+      // Action button — "[ NEXT LEVEL ]" or "[ MISSION COMPLETE ]"
+      const btnLabel = isLastLevel ? '[ MISSION COMPLETE ]' : '[ NEXT LEVEL ]';
+      const btn = this.add.text(width/2, 432, btnLabel, {
+        font: 'bold 24px "Courier New"', fill: '#ffffff',
+        backgroundColor: isLastLevel ? '#443300' : '#004400',
+        padding: { x:20, y:12 },
+        stroke: isLastLevel ? '#ffaa00' : '#00cc44', strokeThickness: 3
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
       container.add(btn);
-      btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#006600' }));
-      btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#004400' }));
+      btn.on('pointerover', () => btn.setStyle({ backgroundColor: isLastLevel ? '#665500' : '#006600' }));
+      btn.on('pointerout',  () => btn.setStyle({ backgroundColor: isLastLevel ? '#443300' : '#004400' }));
       btn.on('pointerdown', () => {
-        this.game.registry.set('currentLevel', this._level + 1);
-        this.game.registry.set('score', totalScore);
-        AM.playGameMusic();
-        this.scene.start('GameScene');
+        if (isLastLevel) {
+          // All levels done — go to victory GameOverScene
+          this.scene.start('GameOverScene', { missionComplete: true, score: totalScore });
+        } else {
+          this.game.registry.set('currentLevel', nextLevel);
+          this.game.registry.set('score', totalScore);
+          AM.stopMusic();
+          AM.playGameMusic();
+          this.scene.start('GameScene');
+        }
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1 });
 
@@ -1493,24 +1569,14 @@
       btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#440066' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#220033' }));
       btn.on('pointerdown', () => {
+        // Always return to MenuScene on restart — never jump directly to GameScene
         this.game.registry.set('currentLevel', 1);
         this.game.registry.set('score', 0);
-        AM.playGameMusic();
-        this.scene.start('GameScene');
-      });
-      this.tweens.add({ targets: btn, scaleX:1.04, scaleY:1.04, duration:900, yoyo:true, repeat:-1 });
-
-      // Main menu button
-      const menuBtn = this.add.text(width/2, 468, '[ MAIN MENU ]', {
-        font: '17px "Courier New"', fill: '#8899cc', padding: { x:10, y:6 }
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      menuBtn.on('pointerover', () => menuBtn.setStyle({ fill: '#aabbff' }));
-      menuBtn.on('pointerout',  () => menuBtn.setStyle({ fill: '#8899cc' }));
-      menuBtn.on('pointerdown', () => {
-        this.game.registry.set('currentLevel', 1);
-        this.game.registry.set('score', 0);
+        this.game.registry.set('health', 3);
+        AM.stopMusic();
         this.scene.start('MenuScene');
       });
+      this.tweens.add({ targets: btn, scaleX:1.04, scaleY:1.04, duration:900, yoyo:true, repeat:-1 });
     }
   }
 
