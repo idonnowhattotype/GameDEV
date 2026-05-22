@@ -1,0 +1,23 @@
+Make the following two targeted fixes only. Do not change anything else.
+
+1. Fix the engine flame position
+The core problem: the ship rotates to face the direction of movement, but the flame is drawn at a fixed local offset that was written assuming the ship always points upward. The flame is ending up at the nose of the ship instead of the engine at the rear.
+Fix this properly:
+
+The flame must always emit from the rear of the ship — the engine nozzle end — regardless of what direction the ship is currently facing.
+Do not draw the flame in world space with a manual x/y offset. Instead, draw it in the ship's local coordinate space using Graphics.save() / Graphics.restore() with the correct transform, or reposition the Graphics object so its origin matches the ship's centre, then draw the flame at local coordinates (0, +halfShipHeight) — i.e. directly below the ship's centre point in local space. Since Phaser rotates the entire GameObject, drawing in local space means the flame will always stay attached to the bottom of the ship as it rotates.
+Concretely: if the ship fuselage height is 38px and the origin is at the centre, the engine nozzle is at local y = +19. Draw the flame starting at local y = +19 and extending further in the +y direction (downward in local space).
+The flame shape itself does not change — orange base, yellow-orange mid, yellow tip during thrust; orange → yellow → blue tip during boost. Only the position and coordinate space is being fixed.
+Test mentally: if the ship is pointing left (rotated 90° left), the flame should appear on the right side of the ship in world space, because that is the engine end. If the ship points down, the flame comes out the top in world space. The flame always opposes the nose.
+
+
+2. Replace screen wrap with hard boundary walls
+Remove the current Phaser.Math.Wrap / wrap-around logic for the player ship. Replace it with hard boundary clamping:
+
+After applying velocity each frame, clamp the player ship's position so it cannot move beyond the game canvas edges.
+Use: player.x = Phaser.Math.Clamp(player.x, 20, gameWidth - 20) and player.y = Phaser.Math.Clamp(player.y, 20, gameHeight - 20) where 20 is the margin in pixels.
+When the ship hits a boundary, zero out the velocity component in that direction (set player.body.velocity.x = 0 or player.body.velocity.y = 0 as appropriate) so the ship does not slide along the wall.
+Keep wrap behaviour for debris and enemies — only the player ship gets the hard boundary.
+
+
+No other changes. Do not touch the HUD, audio, level logic, enemy behaviour, or any other system.

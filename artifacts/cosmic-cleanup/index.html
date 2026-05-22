@@ -818,8 +818,13 @@
       // Draw vacuum radius preview circle
       if (this._vacuumActive) this._drawVacuumCircle();
 
-      // ── Screen wrap for player, debris and satellites ──────────────────────
-      this.physics.world.wrap(this._player, 8);
+      // ── Player: hard boundary walls (no wrap), debris/enemies still wrap ──
+      const { width, height } = this.scale;
+      const bm = 20; // boundary margin px
+      if (this._player.x < bm)          { this._player.x = bm;          this._player.body.velocity.x = 0; }
+      if (this._player.x > width - bm)  { this._player.x = width - bm;  this._player.body.velocity.x = 0; }
+      if (this._player.y < bm)          { this._player.y = bm;          this._player.body.velocity.y = 0; }
+      if (this._player.y > height - bm) { this._player.y = height - bm; this._player.body.velocity.y = 0; }
       this._debrisGroup.getChildren().forEach(d => this.physics.world.wrap(d, 22));
       this._satGroup.getChildren().forEach(s => this.physics.world.wrap(s, 23));
 
@@ -917,9 +922,12 @@
       const py  = this._player.y;
       const rot = this._player.rotation;
       // Nozzle at engine end of ship (behind along facing direction)
-      const nozzleX = px + Math.sin(rot) * 18;
-      const nozzleY = py - Math.cos(rot) * 18;
-      const flameDir = rot + Math.PI;
+      // Engine nozzle is at local (0, +23) — bottom of fuselage in local space.
+      // Local +y direction in world coords: (-sin(rot), +cos(rot)).
+      const nozzleX = px - Math.sin(rot) * 23;
+      const nozzleY = py + Math.cos(rot) * 23;
+      // Flame extends in the local +y direction, which has world angle rot + π/2.
+      const flameDir = rot + Math.PI / 2;
 
       // Port offsets (two engine ports side by side)
       const perpCos = Math.cos(rot), perpSin = Math.sin(rot);
