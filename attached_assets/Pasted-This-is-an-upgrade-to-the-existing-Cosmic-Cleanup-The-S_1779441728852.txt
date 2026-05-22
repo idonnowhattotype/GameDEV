@@ -1,0 +1,78 @@
+This is an upgrade to the existing Cosmic Cleanup: The Space Janitor Phaser 3 game. Keep all existing game logic but replace or overhaul the following. Do not break any working mechanics — only improve and extend them.
+
+VISUAL OVERHAUL — draw all sprites using Phaser Graphics API (no external image files)
+Player ship:
+
+Draw a proper rocket-style spaceship: a tall pointed fuselage (white/light grey), two swept-back wings angling outward from the lower body, a cockpit window (small cyan circle near the top), and a visible engine exhaust nozzle at the bottom.
+When the ship is thrusting (any movement key held), draw an animated flame plume from the engine nozzle — alternate between orange and yellow fill on each frame tick to simulate flickering.
+The ship must be visually distinct from every other object on screen at a glance.
+
+Space debris:
+
+Draw each debris piece as a jagged, irregular polygon with at least 7 vertices — vary the shape per piece using a seeded random offset on each vertex.
+Colour them with a gradient effect: outer edge dark grey (#555), inner lighter grey (#aaa), with occasional rust-brown pieces (#8B4513) to suggest old metal junk.
+Add a slow rotation animation to every debris piece so it visibly tumbles through space.
+Some pieces (1 in 4) should have a small glint — a tiny white dot that fades in and out — to suggest reflective metal.
+
+Enemy rogue satellites (the aggressive bad guys):
+
+These must look threatening. Draw each one as an angular, aggressive shape: a spiked central body (dark red core with jagged protrusions like a sea mine or a star with sharp uneven points), two broken antenna arms extending outward with cracked tips, and a pulsing red glow effect (use a semi-transparent red circle that scales up and down on a timer to simulate a danger beacon).
+Add a red tint that flickers every 20 frames to reinforce the threat.
+When an enemy is actively chasing the player (within 300px), increase its pulse speed and tint it brighter red.
+
+Power-ups:
+
+Shield power-up: draw a hexagonal badge shape, bright electric blue, with a small white shield icon drawn inside it (two diagonal lines forming a chevron). Add a slow clockwise rotation and a blue outer glow (semi-transparent circle).
+Super Vacuum power-up: draw a yellow starburst with 8 points, a darker yellow spinning inner ring, and small white dots orbiting it to suggest a magnetic pull field.
+Both power-ups must bob up and down gently using a sine wave on the y-position.
+
+HUD:
+
+Replace heart emoji icons with properly drawn red heart shapes using the Graphics API.
+Add a thin border and background panel behind the HUD text so it always reads clearly against any background colour.
+The timer should turn orange below 20 seconds and red below 10 seconds with a subtle pulse effect.
+
+
+AUDIO OVERHAUL — use Web Audio API (no external files needed)
+Generate all sounds procedurally using the Web Audio API. Do not rely on external CDN audio. Create a central AudioManager object with the following methods:
+
+playMenuMusic() — a slow, ambient space drone: two oscillators (sine wave), one at 80Hz and one at 120Hz, with a slow LFO (0.1Hz) modulating the volume to create a breathing pulse effect. Loop indefinitely. Start this when the MenuScene loads.
+playGameMusic() — a more tense, rhythmic version: add a third oscillator at 160Hz with a slightly faster LFO (0.3Hz). A low sub-bass pulse every 2 seconds (short 60Hz sine burst at low gain). Loop indefinitely. Start this when GameScene loads, stop menu music.
+playCollectSound() — short ascending two-tone blip: 440Hz for 0.05s then 880Hz for 0.1s, triangle wave, quick fade out.
+playHitSound() — harsh descending buzz: sawtooth wave, 200Hz down to 80Hz over 0.3s, moderate gain.
+playPowerUpSound() — rising arpeggio: three quick tones at 523Hz, 659Hz, 784Hz (C5, E5, G5), each 0.12s, sine wave.
+playLevelCompleteSound() — triumphant four-note rise: 523Hz, 659Hz, 784Hz, 1047Hz, each 0.15s.
+playGameOverSound() — low descending tone: sine wave from 300Hz to 100Hz over 0.8s, slow fade.
+
+Stop and restart the appropriate music track on scene transitions. Do not layer music — only one track plays at a time.
+
+5 LEVELS — implement a proper level progression system
+Add a currentLevel variable tracked in the Phaser game registry so it persists across scenes.
+Level parameters table (apply these exactly):
+LevelDebris countTimer (seconds)Enemy countEnemy speedPower-up count115602602218553802320503100342245412025254051403
+
+On level complete, transition to a LevelCompleteScene (not GameOverScene) that shows the level number, the score so far, and a "Next Level" button. Score carries over between levels.
+After Level 5 is completed, show the GameOverScene with "MISSION COMPLETE" and the total accumulated score.
+If the player fails any level (time out or health zero), show GameOverScene with "MISSION FAILED", the level they reached, and their score. Include a "Restart from Level 1" button that resets score and level.
+Display the current level number in the HUD (e.g., "LEVEL 2").
+
+Level visual variation: Change the background tint slightly per level so the player feels progression:
+
+Level 1: deep navy (#0a0a2e)
+Level 2: dark purple-blue (#0d0a2e)
+Level 3: dark teal-black (#0a1a2e)
+Level 4: deep red-black (#1a0a0e)
+Level 5: near-black with a red tinge (#1a0505) to signal the final push
+
+
+ADDITIONAL IMPROVEMENTS
+
+Screen shake: When the player takes a hit from an enemy, apply a brief camera shake (intensity 8, duration 200ms) using this.cameras.main.shake().
+Hit flash: When the player takes damage, flash the ship sprite red for 3 frames using setTint then clearTint.
+Debris magnet preview: When the Super Vacuum power-up is active, draw a faint dashed circle around the player showing the extended collection radius.
+Enemy spawn warning: When an enemy spawns (from Level 2 onward, enemies respawn after being knocked far off-screen), briefly flash a red arrow at the screen edge pointing toward the enemy, visible for 1.5 seconds.
+Pause function: Pressing P or Escape pauses the game and displays a centred "PAUSED" overlay. Pressing the same key resumes.
+Controls reminder: Display a small semi-transparent controls legend in the bottom-left corner of the GameScene (WASD / arrows to move) that fades out after 5 seconds.
+Score multiplier: If the player collects 3 debris pieces within 4 seconds of each other, activate a x2 multiplier for 5 seconds. Show a "x2 COMBO!" text pop-up near the ship that fades out.
+
+Ensure no console errors. All five levels must be completable. The MenuScene and LevelCompleteScene must play their respective audio. Code must be well-commented throughout.
