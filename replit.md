@@ -46,6 +46,15 @@ A 2D arcade browser game built with Phaser 3. The player pilots a janitor spaces
 - Four scenes: MenuScene → GameScene → LevelCompleteScene → GameOverScene
 - All Web Audio API music and SFX — no external audio files
 
+### v2 additions
+- **Player shooting**: SPACE fires cyan laser bolts (520px/s, 0.35s rate limit, max 6 on screen); bolt tails drawn in fxGfx each frame
+- **Enemy HP system**: L1-2 = 3 HP, L3-4 = 4 HP, L5 = 5 HP; white flash on hit; +50 pts + explosion particles on kill
+- **Enemy respawning**: destroyed enemies respawn at a screen edge after a level-based delay (12s→4s); active cap per level (3→8)
+- **Debris splitting**: 70% large (10 pts) / 30% small (5 pts) at spawn; large → 2 smalls at ±60° when hit by enemy; small just scatters
+- **Off-screen enemy indicators**: red arrows on screen edges every frame pointing toward off-screen or near-edge enemies; duplicates within 30px suppressed
+- **Level intro card**: 2.2s overlay (0.3s fade-in, 1.6s hold, 0.3s fade-out) before gameplay begins; blocks movement and timer
+- **Local leaderboard**: top-5 scores in localStorage; shown on MenuScene; "NEW HIGH SCORE!" flash on GameOverScene
+
 ## User preferences
 
 - Game spec: single index.html, Phaser 3 CDN, Web Audio API, all graphics drawn programmatically

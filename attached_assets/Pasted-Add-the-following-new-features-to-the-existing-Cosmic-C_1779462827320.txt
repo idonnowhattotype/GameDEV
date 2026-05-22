@@ -1,0 +1,114 @@
+Add the following new features to the existing Cosmic Cleanup Phaser 3 game. Do not break any existing mechanics. Each section is self-contained — implement them in order.
+
+1. Player shooting
+Firing:
+
+The player fires projectiles by pressing Spacebar. Rate of fire: one projectile every 0.35 seconds. Holding spacebar fires continuously at that rate. Tapping fires once.
+Projectiles travel in the direction the ship is currently facing (use the ship's current rotation to calculate velocity vector).
+Projectile speed: 520px/s.
+Projectiles are destroyed on contact with the world bounds. They do not wrap.
+Maximum 6 projectiles on screen at once. If at the cap, firing is silenced until one clears.
+
+Projectile visual:
+
+Draw each projectile as a small elongated diamond shape in local space: 4px wide, 14px tall. Fill with a gradient effect — white core (#ffffff) inner ellipse (2px × 6px) inside a cyan outer ellipse (4px × 14px, fill #00ffff, alpha 0.9). Add a short tail: a fading line of 3 dots behind the projectile, each 2px radius, alpha decreasing from 0.5 to 0.1 over 10px distance. This should look like a laser bolt.
+
+Hitting enemies:
+
+On projectile–enemy overlap: destroy the projectile, deal 1 hit to the enemy.
+Each enemy has 3 hit points (Level 1–2), 4 hit points (Level 3–4), 5 hit points (Level 5).
+On each hit: flash the enemy white for 2 frames using setTint(0xffffff) then clearTint(). Play hit sound.
+On enemy destroyed: play a destruction sound (see Audio), show an explosion effect at the enemy's position (see Explosion), add 50 points to score, show +50 pop-up at enemy position using the same float-and-fade tween as debris collection.
+Enemy is not removed from the scene on first hit — only when HP reaches 0.
+Display no HP bar. The flash feedback is sufficient.
+
+Shooting sound:
+
+Add playShootSound() to AudioManager: a very short sine wave blip, 900Hz for 0.04 seconds, triangle wave, gain 0.15, quick exponential fade. This must be quiet and not compete with other sounds.
+
+Explosion effect:
+
+On enemy destruction: spawn 10 small particles at the enemy's position. Each particle is a filled circle (radius 3–5px, randomised), colour randomly chosen from #ff4400, #ff8800, #ffcc00. Each particle has a random velocity (speed 60–160, random direction). Each particle fades out and shrinks over 0.6 seconds using a Phaser tween, then is destroyed. No physics body needed — just tween the alpha and scale to 0.
+
+
+2. Enemy respawning
+
+When an enemy is destroyed by the player, start a respawn timer.
+Respawn delay per level: Level 1: 12s, Level 2: 10s, Level 3: 8s, Level 4: 6s, Level 5: 4s.
+When the timer fires, spawn a new enemy satellite at a random position along one of the four screen edges (outside the visible area by 30px). Apply the level's enemy speed.
+Show the existing spawn warning arrow for 1.5 seconds when a respawned enemy enters from an edge.
+Cap total active enemies on screen at: Level 1: 3, Level 2: 4, Level 3: 5, Level 4: 6, Level 5: 8. Do not respawn if the cap is already reached.
+
+
+3. Debris splitting
+
+Classify debris into two sizes at spawn: large (base radius 16–20px, worth 10 points) and small (base radius 9–13px, worth 5 points). Spawn 70% large, 30% small per level.
+When a large debris piece is hit by an enemy satellite (enemy–debris overlap), do not destroy the debris. Instead, destroy the original piece and replace it with 2 small debris pieces at the same position, each with a randomised velocity that diverges from the original (add ±60° angle variation to the original velocity direction, keep similar speed). Each small piece is worth 5 points.
+Small debris pieces do not split further when hit by enemies — they just get scattered (velocity changed, not destroyed).
+The debris counter counts all pieces regardless of size. Collecting any piece (large or small) counts as 1 toward the total needed to complete the level.
+Visually: large pieces use the existing irregular polygon drawing at full size. Small pieces use the same drawing but scaled down — use a scale factor of 0.6 on the Graphics dimensions.
+
+
+4. Off-screen enemy indicators
+This is separate from the spawn warning arrows (which show for 1.5s on entry). This system runs continuously throughout gameplay.
+
+Every frame, for each active enemy that is outside the visible canvas area (position.x < 0, > 800, position.y < 50 (HUD height), or > 600): draw a small red arrow on the nearest screen edge pointing inward toward the enemy.
+Arrow design: a filled triangle (base 10px, height 14px) in red #ff2200 with a white 1px border. Position it on the screen edge at the y-coordinate (for left/right edges) or x-coordinate (for top/bottom edges) that corresponds to where the enemy is heading toward.
+Also show for enemies that are on-screen but partially clipped — if enemy centre is within 40px of any edge, show the indicator on that edge.
+These arrows are redrawn every frame on a dedicated Graphics layer that sits above the game world but below the HUD.
+Maximum 1 arrow per enemy. If two enemies are on the same edge within 30px of each other, show only the one closest to the edge centre to avoid overlap.
+
+
+5. Level intro card
+
+At the start of each level (when GameScene creates), before gameplay begins, display a full-screen overlay for 2.2 seconds.
+The overlay is a semi-transparent dark rectangle (alpha 0.85) over the already-rendered game world (stars and objects should be faintly visible behind it).
+Contents, centred vertically and horizontally:
+
+Level name in large bold cyan text: LEVEL 1 (or current level number), font size 52px.
+Below it, in white 22px: Collect X debris — Y seconds — Z enemies using the actual values for that level.
+Below that, in grey 16px: SPACE to shoot  •  WASD / Arrows to move.
+
+
+The overlay fades in over 0.3 seconds, holds for 1.6 seconds, then fades out over 0.3 seconds. Only after the full fade-out does the gameplay timer start and enemies begin moving. The player cannot move or fire during the intro card.
+Do not show the intro card when returning from pause.
+
+
+6. Local high score + leaderboard
+Storage:
+
+Use localStorage to persist score data between sessions.
+Store a leaderboard of the top 5 scores. Each entry contains: score (integer), level (highest level reached), date (short date string e.g. "22 May").
+Key: cosmicCleanup_leaderboard.
+On game over or mission complete: read the current leaderboard from localStorage, insert the new score if it qualifies for the top 5 (sort descending by score, keep top 5), write back.
+
+Display on MenuScene:
+
+Below the Start button, show a leaderboard panel.
+Panel: semi-transparent dark rectangle, border cyan 1px, width 340px, centred horizontally.
+Header: HIGH SCORES in small bold cyan text, centred.
+Five rows, each showing rank (#1), score (right-aligned, gold #ffd700), level reached, and date. If fewer than 5 scores exist, fill remaining rows with ---.
+The current run's score is highlighted in bright white if it just entered the leaderboard (pass a flag through the registry from GameOverScene).
+
+Display on GameOverScene:
+
+After showing the final score, add a line: NEW HIGH SCORE! in flashing gold if the score entered the top 5, or Your best: X showing the player's personal best from localStorage if it did not.
+
+
+7. Audio additions
+Add these to the existing AudioManager:
+
+playShootSound() — sine wave, triangle oscillator type, 900Hz, 0.04 seconds, gain 0.15, exponential fade to 0. Must not be jarring or loud.
+playEnemyDestroySound() — noise burst: white noise buffer 0.3 seconds, bandpass filter at 300Hz Q 2, gain ramps from 0.4 to 0 over 0.3 seconds. Should sound like a small explosion pop.
+playIntroSound() — a single low rising tone played when the intro card appears: sine wave from 200Hz to 400Hz over 0.4 seconds, gain 0.3, fade out over 0.2 seconds after the rise. Plays once per level intro.
+
+
+Implementation notes
+
+Projectiles need a Phaser physics group (this.physics.add.group()) with runChildUpdate: true.
+Particle explosions do not need physics — use plain GameObjects with tweens.
+The off-screen indicator Graphics layer must be cleared and redrawn every frame in update().
+localStorage calls must be wrapped in try/catch in case the browser blocks storage access.
+The level intro card must block the gameplay timer start — use a boolean flag this.introComplete = false and only tick the timer when it is true.
+All existing systems (health, combo, power-ups, level progression, scene transitions, HUD, audio) must continue to work correctly after these additions.
+Zero console errors. All five levels must be completable.

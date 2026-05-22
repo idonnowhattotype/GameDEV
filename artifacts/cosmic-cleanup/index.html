@@ -24,16 +24,47 @@
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LEVEL CONFIGURATION TABLE
+  // enemyHp: HP per satellite. respawnDelay: ms before respawn. enemyCap: max active.
   // ═══════════════════════════════════════════════════════════════════════════
   const LEVELS = [
-    { debris: 15, timer: 60, enemies: 2, enemySpeed: 60,  powerups: 2, bg: 0x0a0a2e },
-    { debris: 18, timer: 55, enemies: 3, enemySpeed: 80,  powerups: 2, bg: 0x0d0a2e },
-    { debris: 20, timer: 50, enemies: 3, enemySpeed: 100, powerups: 3, bg: 0x0a1a2e },
-    { debris: 22, timer: 45, enemies: 4, enemySpeed: 120, powerups: 2, bg: 0x1a0a0e },
-    { debris: 25, timer: 40, enemies: 5, enemySpeed: 140, powerups: 3, bg: 0x1a0505 },
+    { debris:15, timer:60, enemies:2, enemySpeed:60,  powerups:2, bg:0x0a0a2e, enemyHp:3, respawnDelay:12000, enemyCap:3 },
+    { debris:18, timer:55, enemies:3, enemySpeed:80,  powerups:2, bg:0x0d0a2e, enemyHp:3, respawnDelay:10000, enemyCap:4 },
+    { debris:20, timer:50, enemies:3, enemySpeed:100, powerups:3, bg:0x0a1a2e, enemyHp:4, respawnDelay: 8000, enemyCap:5 },
+    { debris:22, timer:45, enemies:4, enemySpeed:120, powerups:2, bg:0x1a0a0e, enemyHp:4, respawnDelay: 6000, enemyCap:6 },
+    { debris:25, timer:40, enemies:5, enemySpeed:140, powerups:3, bg:0x1a0505, enemyHp:5, respawnDelay: 4000, enemyCap:8 },
   ];
-  const TOTAL_LEVELS = LEVELS.length;
+  const TOTAL_LEVELS  = LEVELS.length;
   const VACUUM_RADIUS = 170;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LEADERBOARD HELPERS — localStorage, top-5 by score
+  // ═══════════════════════════════════════════════════════════════════════════
+  function lbLoad() {
+    try { return JSON.parse(localStorage.getItem('cosmicCleanup_leaderboard') || '[]'); }
+    catch(e) { return []; }
+  }
+  function lbSave(entries) {
+    try { localStorage.setItem('cosmicCleanup_leaderboard', JSON.stringify(entries)); }
+    catch(e) {}
+  }
+  /** Insert a score. Returns true if the entry qualifies for the top-5. */
+  function lbInsert(score, level) {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now  = new Date();
+    const date = `${now.getDate()} ${months[now.getMonth()]}`;
+    const entries = lbLoad();
+    const qualifies = entries.length < 5 || score > (entries[entries.length - 1]?.score ?? 0);
+    if (qualifies) {
+      entries.push({ score, level, date });
+      entries.sort((a, b) => b.score - a.score);
+      lbSave(entries.slice(0, 5));
+    }
+    return qualifies;
+  }
+  function lbBest() {
+    const e = lbLoad();
+    return e.length ? e[0].score : 0;
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // AUDIO MANAGER — all sound generated via Web Audio API, no external files
@@ -41,18 +72,16 @@
   class AudioManager {
     constructor() {
       this._ctx = null;
-      this._musicNodes = []; // all nodes belonging to current music track
+      this._musicNodes = [];
       this._subBassInterval = null;
     }
 
-    /** Lazily create / resume the shared AudioContext after a user gesture. */
     _getCtx() {
       if (!this._ctx) this._ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (this._ctx.state === 'suspended') this._ctx.resume();
       return this._ctx;
     }
 
-    /** Internal: play a tone with an exponential fade-out. */
     _tone(freq, dur, type = 'sine', gain = 0.25, startOffset = 0) {
       try {
         const ctx = this._getCtx();
@@ -65,90 +94,55 @@
         g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + dur);
         osc.start(ctx.currentTime + startOffset);
         osc.stop(ctx.currentTime + startOffset + dur + 0.01);
-      } catch(e) { /* audio errors are non-fatal */ }
+      } catch(e) {}
     }
 
-    /** Stop all currently playing music nodes. */
     stopMusic() {
       if (this._subBassInterval) { clearInterval(this._subBassInterval); this._subBassInterval = null; }
       this._musicNodes.forEach(n => { try { n.stop(); } catch(e){} });
       this._musicNodes = [];
     }
 
-    /**
-     * Slow ambient space drone for the menu:
-     * two sine oscillators (80 Hz, 120 Hz) with a 0.1 Hz LFO on volume.
-     */
     playMenuMusic() {
       this.stopMusic();
       try {
         const ctx = this._getCtx();
         [80, 120].forEach((freq, i) => {
-          const osc     = ctx.createOscillator();
-          const oscGain = ctx.createGain();
-          const lfo     = ctx.createOscillator();
-          const lfoGain = ctx.createGain();
-
-          osc.type = 'sine';
-          osc.frequency.value = freq;
-          oscGain.gain.value = i === 0 ? 0.07 : 0.05; // base level
-
-          lfo.type = 'sine';
-          lfo.frequency.value = 0.1; // breathing speed
-          lfoGain.gain.value = 0.04; // modulation depth
-
-          lfo.connect(lfoGain);
-          lfoGain.connect(oscGain.gain); // LFO modulates the gain
-          osc.connect(oscGain);
-          oscGain.connect(ctx.destination);
-
+          const osc = ctx.createOscillator(), oscGain = ctx.createGain();
+          const lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+          osc.type = 'sine'; osc.frequency.value = freq;
+          oscGain.gain.value = i === 0 ? 0.07 : 0.05;
+          lfo.type = 'sine'; lfo.frequency.value = 0.1;
+          lfoGain.gain.value = 0.04;
+          lfo.connect(lfoGain); lfoGain.connect(oscGain.gain);
+          osc.connect(oscGain); oscGain.connect(ctx.destination);
           osc.start(); lfo.start();
           this._musicNodes.push(osc, lfo);
         });
       } catch(e) {}
     }
 
-    /**
-     * Tense rhythmic drone for gameplay:
-     * three oscillators (80, 120, 160 Hz), faster LFO (0.3 Hz),
-     * plus a sub-bass pulse every 2 seconds.
-     */
     playGameMusic() {
       this.stopMusic();
       try {
         const ctx = this._getCtx();
         [80, 120, 160].forEach((freq, i) => {
-          const osc     = ctx.createOscillator();
-          const oscGain = ctx.createGain();
-          const lfo     = ctx.createOscillator();
-          const lfoGain = ctx.createGain();
-
-          osc.type = 'sine';
-          osc.frequency.value = freq;
+          const osc = ctx.createOscillator(), oscGain = ctx.createGain();
+          const lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+          osc.type = 'sine'; osc.frequency.value = freq;
           oscGain.gain.value = [0.06, 0.04, 0.03][i];
-
-          lfo.type = 'sine';
-          lfo.frequency.value = 0.3;
+          lfo.type = 'sine'; lfo.frequency.value = 0.3;
           lfoGain.gain.value = 0.03;
-
-          lfo.connect(lfoGain);
-          lfoGain.connect(oscGain.gain);
-          osc.connect(oscGain);
-          oscGain.connect(ctx.destination);
-
+          lfo.connect(lfoGain); lfoGain.connect(oscGain.gain);
+          osc.connect(oscGain); oscGain.connect(ctx.destination);
           osc.start(); lfo.start();
           this._musicNodes.push(osc, lfo);
         });
-
-        // Sub-bass pulse every 2 s
         this._subBassInterval = setInterval(() => {
           try {
-            const c   = this._getCtx();
-            const o   = c.createOscillator();
-            const g   = c.createGain();
+            const c = this._getCtx(), o = c.createOscillator(), g = c.createGain();
             o.connect(g); g.connect(c.destination);
-            o.type = 'sine';
-            o.frequency.value = 60;
+            o.type = 'sine'; o.frequency.value = 60;
             g.gain.setValueAtTime(0.12, c.currentTime);
             g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.4);
             o.start(); o.stop(c.currentTime + 0.4);
@@ -157,18 +151,10 @@
       } catch(e) {}
     }
 
-    /** Short ascending two-tone blip on debris collect. */
-    playCollectSound() {
-      this._tone(440, 0.05, 'triangle', 0.2);
-      this._tone(880, 0.10, 'triangle', 0.18, 0.05);
-    }
-
-    /** Harsh descending buzz when player takes a hit. */
+    playCollectSound()      { this._tone(440, 0.05, 'triangle', 0.2); this._tone(880, 0.10, 'triangle', 0.18, 0.05); }
     playHitSound() {
       try {
-        const ctx = this._getCtx();
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
+        const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
         osc.connect(g); g.connect(ctx.destination);
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(200, ctx.currentTime);
@@ -178,62 +164,28 @@
         osc.start(); osc.stop(ctx.currentTime + 0.31);
       } catch(e) {}
     }
-
-    /** Rising arpeggio C5→E5→G5 on power-up collect. */
-    playPowerUpSound() {
-      [523, 659, 784].forEach((f, i) => this._tone(f, 0.12, 'sine', 0.25, i * 0.12));
-    }
-
-    /** Triumphant four-note rise on level complete. */
-    playLevelCompleteSound() {
-      [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.15, 'sine', 0.3, i * 0.15));
-    }
-
-    /**
-     * Rocket boost sound for Super Vacuum pickup:
-     * white-noise burst through a 800 Hz lowpass filter,
-     * gain: 0→0.6 over 0.15 s (ignition), hold 0.4 s, fade to 0 over 1 s.
-     */
+    playPowerUpSound()         { [523, 659, 784].forEach((f, i) => this._tone(f, 0.12, 'sine', 0.25, i * 0.12)); }
+    playLevelCompleteSound()   { [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.15, 'sine', 0.3, i * 0.15)); }
     playRocketBoostSound() {
       try {
-        const ctx    = this._getCtx();
-        const rate   = ctx.sampleRate;
-        const bufLen = rate * 2; // 2-second buffer
-        const buf    = ctx.createBuffer(1, bufLen, rate);
-        const data   = buf.getChannelData(0);
-        for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
-
-        const src    = ctx.createBufferSource();
-        src.buffer   = buf;
-        src.loop     = false;
-
-        const filter       = ctx.createBiquadFilter();
-        filter.type        = 'lowpass';
-        filter.frequency.value = 800;
-        filter.Q.value     = 0.5;
-
-        const gain = ctx.createGain();
-        const t    = ctx.currentTime;
-        gain.gain.setValueAtTime(0,    t);
-        gain.gain.linearRampToValueAtTime(0.6, t + 0.15);  // ignition burst
-        gain.gain.setValueAtTime(0.6,  t + 0.55);           // hold
-        gain.gain.linearRampToValueAtTime(0.15, t + 1.55); // sustained fade
-        gain.gain.linearRampToValueAtTime(0.0,  t + 1.6);  // silent
-
-        src.connect(filter);
-        filter.connect(gain);
-        gain.connect(ctx.destination);
-        src.start(t);
-        src.stop(t + 1.6);
+        const ctx = this._getCtx(), rate = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, rate * 2, rate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 800; filter.Q.value = 0.5;
+        const gain = ctx.createGain(), t = ctx.currentTime;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.6, t + 0.15);
+        gain.gain.setValueAtTime(0.6, t + 0.55);
+        gain.gain.linearRampToValueAtTime(0.0, t + 1.6);
+        src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+        src.start(t); src.stop(t + 1.6);
       } catch(e) {}
     }
-
-    /** Low descending tone on game over. */
     playGameOverSound() {
       try {
-        const ctx = this._getCtx();
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
+        const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
         osc.connect(g); g.connect(ctx.destination);
         osc.type = 'sine';
         osc.frequency.setValueAtTime(300, ctx.currentTime);
@@ -243,120 +195,116 @@
         osc.start(); osc.stop(ctx.currentTime + 0.81);
       } catch(e) {}
     }
+
+    /** Quiet laser blip for player shooting. */
+    playShootSound() { this._tone(900, 0.04, 'triangle', 0.13); }
+
+    /** Small explosion pop when enemy satellite is destroyed. */
+    playEnemyDestroySound() {
+      try {
+        const ctx = this._getCtx(), rate = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, Math.floor(rate * 0.3), rate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        const filter = ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 300; filter.Q.value = 2;
+        const gain = ctx.createGain(), t = ctx.currentTime;
+        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.3);
+        src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+        src.start(t); src.stop(t + 0.3);
+      } catch(e) {}
+    }
+
+    /** Rising tone when level intro card appears. */
+    playIntroSound() {
+      try {
+        const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(200, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(400, ctx.currentTime + 0.4);
+        g.gain.setValueAtTime(0.3, ctx.currentTime);
+        g.gain.setValueAtTime(0.3, ctx.currentTime + 0.4);
+        g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
+        osc.start(); osc.stop(ctx.currentTime + 0.65);
+      } catch(e) {}
+    }
   }
-  // Single global instance
   const AM = new AudioManager();
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TEXTURE FACTORY — all graphics drawn programmatically, no external files
   // ═══════════════════════════════════════════════════════════════════════════
   function buildTextures(scene) {
-    // ── Player Ship (42 × 46) — pixel-art arcade fighter style ─────────────
-    // Fuselage: 38 px tall pentagon, steel blue. Wings: delta swept-back.
-    // Cockpit: cyan oval. Engine block: dark grey with two ports.
+    // ── Player Ship (42 × 46) ───────────────────────────────────────────────
     if (!scene.textures.exists('ship')) {
       const g = scene.add.graphics();
       const cx = 21;
-
-      // Delta wings (draw first, behind fuselage)
       g.fillStyle(0x778899, 1);
-      g.fillPoints([{x:cx-8,y:20},{x:cx-17,y:42},{x:cx-8,y:42}], true); // left
-      g.fillPoints([{x:cx+8,y:20},{x:cx+17,y:42},{x:cx+8,y:42}], true); // right
+      g.fillPoints([{x:cx-8,y:20},{x:cx-17,y:42},{x:cx-8,y:42}], true);
+      g.fillPoints([{x:cx+8,y:20},{x:cx+17,y:42},{x:cx+8,y:42}], true);
       g.lineStyle(1.5, 0x334455, 1);
       g.strokePoints([{x:cx-8,y:20},{x:cx-17,y:42},{x:cx-8,y:42}], true);
       g.strokePoints([{x:cx+8,y:20},{x:cx+17,y:42},{x:cx+8,y:42}], true);
-
-      // Main fuselage pentagon — pointed top, flat bottom, steel blue
       g.fillStyle(0x4a6fa5, 1);
-      g.fillPoints([
-        {x:cx,   y:4},  // top point
-        {x:cx+8, y:16}, // upper-right shoulder
-        {x:cx+7, y:42}, // lower-right
-        {x:cx-7, y:42}, // lower-left
-        {x:cx-8, y:16}  // upper-left shoulder
-      ], true);
-
-      // Highlight stripe down centre
+      g.fillPoints([{x:cx,y:4},{x:cx+8,y:16},{x:cx+7,y:42},{x:cx-7,y:42},{x:cx-8,y:16}], true);
       g.fillStyle(0x8ab4f8, 0.75);
       g.fillRect(cx-1, 5, 2, 36);
-
-      // Engine block at base of fuselage
       g.fillStyle(0x222222, 1);
       g.fillRect(cx-7, 40, 14, 6);
-
-      // Two circular engine ports
       g.fillStyle(0x000000, 1);
-      g.fillCircle(cx-3, 44, 2.5);
-      g.fillCircle(cx+3, 44, 2.5);
-      // Dim orange inner glow
+      g.fillCircle(cx-3, 44, 2.5); g.fillCircle(cx+3, 44, 2.5);
       g.fillStyle(0xff6600, 0.35);
-      g.fillCircle(cx-3, 44, 1.5);
-      g.fillCircle(cx+3, 44, 1.5);
-
-      // Cockpit — elongated cyan oval near top of fuselage
+      g.fillCircle(cx-3, 44, 1.5); g.fillCircle(cx+3, 44, 1.5);
       g.fillStyle(0x00ffff, 0.95);
       g.fillEllipse(cx, 15, 8, 13);
-      // White glint in upper-left of cockpit
       g.fillStyle(0xffffff, 0.9);
       g.fillCircle(cx-2, 11, 1.5);
-
       g.generateTexture('ship', 42, 46);
       g.destroy();
     }
 
-    // ── Debris variants (44 × 44 each) ───────────────────────────────────────
-    // Six different jagged polygons with varied colors
+    // ── Debris variants (44 × 44 each) ──────────────────────────────────────
     const debrisColorSets = [
-      { outer: 0x555555, inner: 0xaaaaaa }, // standard grey
-      { outer: 0x4a4a4a, inner: 0x888888 }, // dark grey
-      { outer: 0x666666, inner: 0xbbbbbb }, // lighter grey
-      { outer: 0x6B4010, inner: 0x9B6030 }, // rust brown
-      { outer: 0x503a20, inner: 0x8a6040 }, // darker rust
-      { outer: 0x5a5060, inner: 0x9090a0 }, // purple-grey
+      { outer: 0x555555, inner: 0xaaaaaa },
+      { outer: 0x4a4a4a, inner: 0x888888 },
+      { outer: 0x666666, inner: 0xbbbbbb },
+      { outer: 0x6B4010, inner: 0x9B6030 },
+      { outer: 0x503a20, inner: 0x8a6040 },
+      { outer: 0x5a5060, inner: 0x9090a0 },
     ];
     for (let v = 0; v < 6; v++) {
       if (scene.textures.exists(`debris_${v}`)) continue;
-      const g  = scene.add.graphics();
+      const g = scene.add.graphics();
       const cx = 22, cy = 22, r = 17;
       const { outer, inner } = debrisColorSets[v];
-      const numPts = 8 + (v % 3); // 8–10 vertices per piece
+      const numPts = 8 + (v % 3);
       const pts = [];
       for (let i = 0; i < numPts; i++) {
         const ang = (i / numPts) * Math.PI * 2;
-        // Deterministic irregular radius — different per variant
         const wobble = 0.55 + 0.45 * Math.abs(Math.sin(v * 5.1 + i * 2.4));
         pts.push({ x: cx + r * wobble * Math.cos(ang), y: cy + r * wobble * Math.sin(ang) });
       }
-      g.fillStyle(outer, 1);
-      g.fillPoints(pts, true);
-      // Inner lighter highlight
+      g.fillStyle(outer, 1); g.fillPoints(pts, true);
       const innerPts = pts.map(p => ({ x: cx + (p.x-cx)*0.45, y: cy + (p.y-cy)*0.45 }));
-      g.fillStyle(inner, 0.7);
-      g.fillPoints(innerPts, true);
-      // Edge outline
-      g.lineStyle(1, 0x222222, 0.7);
-      g.strokePoints(pts, true);
-      // Surface scratch
+      g.fillStyle(inner, 0.7); g.fillPoints(innerPts, true);
+      g.lineStyle(1, 0x222222, 0.7); g.strokePoints(pts, true);
       g.lineStyle(1, 0x333333, 0.5);
-      g.beginPath();
-      g.moveTo(cx - 4 + v, cy - 6); g.lineTo(cx + 5 - v, cy + 4);
-      g.strokePath();
+      g.beginPath(); g.moveTo(cx - 4 + v, cy - 6); g.lineTo(cx + 5 - v, cy + 4); g.strokePath();
       g.generateTexture(`debris_${v}`, 44, 44);
       g.destroy();
     }
 
-    // ── Enemy Rogue Satellite (46 × 46) — 35% smaller than original ─────────
+    // ── Enemy Rogue Satellite (46 × 46) ─────────────────────────────────────
     if (!scene.textures.exists('satellite')) {
       const g = scene.add.graphics();
       const cx = 23, cy = 23, bodyR = 8;
-      // Spikes (10 irregular protrusions) — radii reduced by 35%
       for (let i = 0; i < 10; i++) {
-        const baseAng  = (i / 10) * Math.PI * 2;
-        const angOff   = Math.sin(i * 1.7) * 0.18;
-        const ang      = baseAng + angOff;
-        const tipR     = i % 3 === 0 ? 18 : i % 2 === 0 ? 15 : 12;
-        const sideAng1 = ang - 0.22;
-        const sideAng2 = ang + 0.22;
+        const baseAng = (i / 10) * Math.PI * 2;
+        const ang = baseAng + Math.sin(i * 1.7) * 0.18;
+        const tipR = i % 3 === 0 ? 18 : i % 2 === 0 ? 15 : 12;
+        const sideAng1 = ang - 0.22, sideAng2 = ang + 0.22;
         g.fillStyle(0xbb0000, 1);
         g.fillPoints([
           {x: cx + bodyR * Math.cos(sideAng1), y: cy + bodyR * Math.sin(sideAng1)},
@@ -364,128 +312,100 @@
           {x: cx + bodyR * Math.cos(sideAng2), y: cy + bodyR * Math.sin(sideAng2)},
         ], true);
       }
-      // Dark core body
-      g.fillStyle(0x880000, 1);
-      g.fillCircle(cx, cy, bodyR);
-      // Glowing inner core
-      g.fillStyle(0xff2200, 0.9);
-      g.fillCircle(cx, cy, 4);
-      g.fillStyle(0xff8888, 1);
-      g.fillCircle(cx - 1, cy - 1, 2);
-      // Left antenna arm
+      g.fillStyle(0x880000, 1); g.fillCircle(cx, cy, bodyR);
+      g.fillStyle(0xff2200, 0.9); g.fillCircle(cx, cy, 4);
+      g.fillStyle(0xff8888, 1); g.fillCircle(cx-1, cy-1, 2);
       g.lineStyle(2, 0xaa1111, 1);
-      g.beginPath(); g.moveTo(cx - bodyR - 1, cy); g.lineTo(cx - 20, cy - 4); g.strokePath();
+      g.beginPath(); g.moveTo(cx-bodyR-1,cy); g.lineTo(cx-20,cy-4); g.strokePath();
       g.lineStyle(2, 0xff3333, 0.8);
-      g.beginPath(); g.moveTo(cx-20, cy-4); g.lineTo(cx-23, cy-1);  g.strokePath();
-      g.beginPath(); g.moveTo(cx-20, cy-4); g.lineTo(cx-22, cy-8);  g.strokePath();
-      // Right antenna arm
+      g.beginPath(); g.moveTo(cx-20,cy-4); g.lineTo(cx-23,cy-1); g.strokePath();
+      g.beginPath(); g.moveTo(cx-20,cy-4); g.lineTo(cx-22,cy-8); g.strokePath();
       g.lineStyle(2, 0xaa1111, 1);
-      g.beginPath(); g.moveTo(cx + bodyR + 1, cy); g.lineTo(cx + 20, cy + 4); g.strokePath();
+      g.beginPath(); g.moveTo(cx+bodyR+1,cy); g.lineTo(cx+20,cy+4); g.strokePath();
       g.lineStyle(2, 0xff3333, 0.8);
-      g.beginPath(); g.moveTo(cx+20, cy+4); g.lineTo(cx+23, cy+1);  g.strokePath();
-      g.beginPath(); g.moveTo(cx+20, cy+4); g.lineTo(cx+22, cy+8);  g.strokePath();
+      g.beginPath(); g.moveTo(cx+20,cy+4); g.lineTo(cx+23,cy+1); g.strokePath();
+      g.beginPath(); g.moveTo(cx+20,cy+4); g.lineTo(cx+22,cy+8); g.strokePath();
       g.generateTexture('satellite', 46, 46);
       g.destroy();
     }
 
-    // ── Shield Power-up — hexagonal badge, electric blue, chevron icon (52×52)
+    // ── Shield Power-up (52 × 52) ────────────────────────────────────────────
     if (!scene.textures.exists('powerup_shield')) {
       const g = scene.add.graphics();
       const cx = 26, cy = 26, r = 21;
       const hexPts = [], glowPts = [];
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
-        hexPts.push({ x: cx + r * Math.cos(a),       y: cy + r * Math.sin(a) });
-        glowPts.push({ x: cx + (r+5)*Math.cos(a),    y: cy + (r+5)*Math.sin(a) });
+        hexPts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+        glowPts.push({ x: cx + (r+5)*Math.cos(a), y: cy + (r+5)*Math.sin(a) });
       }
-      // Outer glow ring
-      g.fillStyle(0x0044ff, 0.25);
-      g.fillPoints(glowPts, true);
-      // Main hexagon
-      g.fillStyle(0x0066ff, 0.92);
-      g.fillPoints(hexPts, true);
-      g.lineStyle(2.5, 0x88ccff, 1);
-      g.strokePoints(hexPts, true);
-      // Inner light highlight
+      g.fillStyle(0x0044ff, 0.25); g.fillPoints(glowPts, true);
+      g.fillStyle(0x0066ff, 0.92); g.fillPoints(hexPts, true);
+      g.lineStyle(2.5, 0x88ccff, 1); g.strokePoints(hexPts, true);
       g.fillStyle(0x44aaff, 0.3);
-      const innerHex = hexPts.map(p => ({x: cx+(p.x-cx)*0.55, y: cy+(p.y-cy)*0.55}));
-      g.fillPoints(innerHex, true);
-      // Shield kite/heraldic outline — flat top, tapering sides, point at bottom
-      // Uses strokePoints (bezierCurveTo not available in Phaser path API)
+      g.fillPoints(hexPts.map(p => ({x: cx+(p.x-cx)*0.55, y: cy+(p.y-cy)*0.55})), true);
       g.lineStyle(2, 0xffffff, 1);
-      const shieldPts = [
-        { x: cx-9,  y: cy-8  }, // top-left
-        { x: cx+9,  y: cy-8  }, // top-right
-        { x: cx+11, y: cy+0  }, // right shoulder
-        { x: cx+7,  y: cy+6  }, // right lower
-        { x: cx,    y: cy+12 }, // bottom point
-        { x: cx-7,  y: cy+6  }, // left lower
-        { x: cx-11, y: cy+0  }, // left shoulder
-      ];
-      g.strokePoints(shieldPts, true);
+      g.strokePoints([{x:cx-9,y:cy-8},{x:cx+9,y:cy-8},{x:cx+11,y:cy+0},{x:cx+7,y:cy+6},{x:cx,y:cy+12},{x:cx-7,y:cy+6},{x:cx-11,y:cy+0}], true);
       g.generateTexture('powerup_shield', 52, 52);
       g.destroy();
     }
 
-    // ── Vacuum Power-up — yellow 8-point starburst, inner ring, glow (52×52)
+    // ── Vacuum Power-up (52 × 52) ────────────────────────────────────────────
     if (!scene.textures.exists('powerup_vacuum')) {
       const g = scene.add.graphics();
       const cx = 26, cy = 26;
       const pts = [];
       for (let i = 0; i < 16; i++) {
         const ang = (i / 16) * Math.PI * 2 - Math.PI / 2;
-        const r   = i % 2 === 0 ? 21 : 9;
-        pts.push({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang) });
+        pts.push({ x: cx + (i%2===0?21:9) * Math.cos(ang), y: cy + (i%2===0?21:9) * Math.sin(ang) });
       }
-      // Outer glow
-      g.fillStyle(0xffaa00, 0.28);
-      g.fillCircle(cx, cy, 24);
-      // 8-point starburst
-      g.fillStyle(0xffcc00, 1);
-      g.fillPoints(pts, true);
-      g.lineStyle(1, 0xffffff, 0.4);
-      g.strokePoints(pts, true);
-      // Darker spinning inner ring (drawn statically, animated via tween on sprite)
-      g.fillStyle(0xff9900, 1);
-      g.fillCircle(cx, cy, 9);
-      // Bright center
-      g.fillStyle(0xffee66, 1);
-      g.fillCircle(cx, cy, 5);
+      g.fillStyle(0xffaa00, 0.28); g.fillCircle(cx, cy, 24);
+      g.fillStyle(0xffcc00, 1); g.fillPoints(pts, true);
+      g.lineStyle(1, 0xffffff, 0.4); g.strokePoints(pts, true);
+      g.fillStyle(0xff9900, 1); g.fillCircle(cx, cy, 9);
+      g.fillStyle(0xffee66, 1); g.fillCircle(cx, cy, 5);
       g.generateTexture('powerup_vacuum', 52, 52);
       g.destroy();
     }
 
-    // ── HUD Heart (24×22) — proper drawn heart shape ─────────────────────────
+    // ── HUD Heart (24 × 22) ──────────────────────────────────────────────────
     if (!scene.textures.exists('heart')) {
       const g = scene.add.graphics();
       g.fillStyle(0xff2244, 1);
-      g.fillCircle(7,  7, 6.5);
-      g.fillCircle(17, 7, 6.5);
+      g.fillCircle(7, 7, 6.5); g.fillCircle(17, 7, 6.5);
       g.fillTriangle(1, 9, 23, 9, 12, 22);
-      // Highlight
-      g.fillStyle(0xff88aa, 0.65);
-      g.fillCircle(5, 5, 3);
+      g.fillStyle(0xff88aa, 0.65); g.fillCircle(5, 5, 3);
       g.generateTexture('heart', 24, 22);
       g.destroy();
     }
 
-    // ── Thruster Particle (8×8) ───────────────────────────────────────────────
+    // ── Thruster Particle (8 × 8) ────────────────────────────────────────────
     if (!scene.textures.exists('particle')) {
       const g = scene.add.graphics();
-      g.fillStyle(0xff8800, 1);
-      g.fillCircle(4, 4, 4);
+      g.fillStyle(0xff8800, 1); g.fillCircle(4, 4, 4);
       g.generateTexture('particle', 8, 8);
       g.destroy();
     }
 
-    // ── Enemy Spawn Warning Arrow (32×24) ────────────────────────────────────
+    // ── Spawn Warning Arrow (32 × 24) ────────────────────────────────────────
     if (!scene.textures.exists('spawn_arrow')) {
       const g = scene.add.graphics();
-      g.fillStyle(0xff0000, 0.9);
-      g.fillTriangle(16, 0, 32, 24, 0, 24);
-      g.lineStyle(1.5, 0xff9999, 0.9);
-      g.strokeTriangle(16, 0, 32, 24, 0, 24);
+      g.fillStyle(0xff0000, 0.9); g.fillTriangle(16, 0, 32, 24, 0, 24);
+      g.lineStyle(1.5, 0xff9999, 0.9); g.strokeTriangle(16, 0, 32, 24, 0, 24);
       g.generateTexture('spawn_arrow', 32, 24);
+      g.destroy();
+    }
+
+    // ── Bullet projectile (12 × 22) — cyan laser bolt ───────────────────────
+    if (!scene.textures.exists('bullet')) {
+      const g = scene.add.graphics();
+      // Outer cyan diamond
+      g.fillStyle(0x00ffff, 0.9);
+      g.fillPoints([{x:6,y:0},{x:10,y:11},{x:6,y:22},{x:2,y:11}], true);
+      // White inner core ellipse
+      g.fillStyle(0xffffff, 1);
+      g.fillEllipse(6, 11, 3, 8);
+      g.generateTexture('bullet', 12, 22);
       g.destroy();
     }
   }
@@ -493,14 +413,8 @@
   // ═══════════════════════════════════════════════════════════════════════════
   // STARFIELD UTILITY
   // ═══════════════════════════════════════════════════════════════════════════
-  /**
-   * Build a star-field background.
-   * If dynamic=true, stores individual rectangle objects on scene.starDots
-   * so they can be scrolled downward each frame in update().
-   */
   function buildStarfield(scene, dynamic = false) {
     const { width, height } = scene.scale;
-    // Space gradient background
     const bg = scene.add.graphics();
     const bgColor = scene.game.registry.get('bgColor') || 0x000011;
     bg.fillStyle(bgColor, 1);
@@ -510,23 +424,22 @@
     if (dynamic) {
       scene.starDots = [];
       for (let i = 0; i < count; i++) {
-        const x     = Phaser.Math.Between(0, width);
-        const y     = Phaser.Math.Between(0, height);
+        const x = Phaser.Math.Between(0, width);
+        const y = Phaser.Math.Between(0, height);
         const size  = Math.random() < 0.12 ? 2 : 1;
         const alpha = Phaser.Math.FloatBetween(0.25, 1.0);
         const dot   = scene.add.rectangle(x, y, size, size, 0xffffff, alpha);
-        dot.scrollFactor = 0; // stay fixed relative to camera
+        dot.scrollFactor = 0;
         dot._speed = Phaser.Math.FloatBetween(0.12, 0.55);
         scene.starDots.push(dot);
       }
     } else {
       const g = scene.add.graphics();
       for (let i = 0; i < count; i++) {
-        const x     = Phaser.Math.Between(0, width);
-        const y     = Phaser.Math.Between(0, height);
-        const r     = Math.random() < 0.1 ? 1.5 : 0.8;
-        const alpha = Phaser.Math.FloatBetween(0.3, 1.0);
-        g.fillStyle(0xffffff, alpha);
+        const x = Phaser.Math.Between(0, width);
+        const y = Phaser.Math.Between(0, height);
+        const r = Math.random() < 0.1 ? 1.5 : 0.8;
+        g.fillStyle(0xffffff, Phaser.Math.FloatBetween(0.3, 1.0));
         g.fillCircle(x, y, r);
       }
     }
@@ -539,90 +452,113 @@
     constructor() { super({ key: 'MenuScene' }); }
 
     create() {
-      // Reset all persistent state to defaults
       this.game.registry.set('currentLevel', 1);
       this.game.registry.set('score', 0);
       this.game.registry.set('health', 3);
       this.game.registry.set('bgColor', 0x000011);
 
-      buildStarfield(this, true);   // scrolling starfield per spec
+      buildStarfield(this, true);
       buildTextures(this);
 
       const { width, height } = this.scale;
 
       // Title
-      this.add.text(width/2, 100, 'COSMIC CLEANUP', {
-        font: 'bold 46px "Courier New"',
-        fill: '#66ddff',
+      this.add.text(width/2, 76, 'COSMIC CLEANUP', {
+        font: 'bold 44px "Courier New"', fill: '#66ddff',
         stroke: '#003366', strokeThickness: 6,
         shadow: { color: '#00aaff', blur: 24, fill: true }
       }).setOrigin(0.5);
-      this.add.text(width/2, 152, 'The Space Janitor', {
-        font: '22px "Courier New"', fill: '#aaddff'
+      this.add.text(width/2, 122, 'The Space Janitor', {
+        font: '20px "Courier New"', fill: '#aaddff'
       }).setOrigin(0.5);
 
-      // Story blurb
-      this.add.text(width/2, 225,
+      this.add.text(width/2, 188,
         '"A VIP space cruiser is inbound.\nClear Earth\'s orbit across 5 levels\nbefore it docks — or face the consequences."',
-        { font: '15px "Courier New"', fill: '#cceecc', align: 'center', lineSpacing: 6 }
+        { font: '14px "Courier New"', fill: '#cceecc', align: 'center', lineSpacing: 5 }
       ).setOrigin(0.5);
 
-      // Level table summary
-      this.add.text(width/2, 320,
-        'LEVEL 1 — 15 debris / 60 s   LEVEL 2 — 18 debris / 55 s\n' +
-        'LEVEL 3 — 20 debris / 50 s   LEVEL 4 — 22 debris / 45 s\n' +
-        'LEVEL 5 — 25 debris / 40 s',
-        { font: '12px "Courier New"', fill: '#7799bb', align: 'center', lineSpacing: 4 }
+      this.add.text(width/2, 256,
+        'LEVEL 1 — 15 debris / 60s   LEVEL 2 — 18 debris / 55s\n' +
+        'LEVEL 3 — 20 debris / 50s   LEVEL 4 — 22 debris / 45s\n' +
+        '              LEVEL 5 — 25 debris / 40s',
+        { font: '11px "Courier New"', fill: '#7799bb', align: 'center', lineSpacing: 3 }
       ).setOrigin(0.5);
 
-      this.add.text(width/2, 388, 'WASD / Arrow Keys to move  •  Auto-collect on contact', {
-        font: '13px "Courier New"', fill: '#88aacc'
-      }).setOrigin(0.5);
-      this.add.text(width/2, 408, 'P or ESC to pause', {
-        font: '13px "Courier New"', fill: '#667788'
+      this.add.text(width/2, 306, 'SPACE to shoot  •  WASD / Arrows to move  •  P to pause', {
+        font: '11px "Courier New"', fill: '#88aacc'
       }).setOrigin(0.5);
 
       // Start button
-      const btn = this.add.text(width/2, 466, '[ START MISSION ]', {
-        font: 'bold 28px "Courier New"', fill: '#ffffff',
-        backgroundColor: '#003388', padding: { x:22, y:13 },
+      const btn = this.add.text(width/2, 336, '[ START MISSION ]', {
+        font: 'bold 26px "Courier New"', fill: '#ffffff',
+        backgroundColor: '#003388', padding: { x:20, y:11 },
         stroke: '#0066ff', strokeThickness: 3
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
       btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#0055cc' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#003388' }));
       btn.on('pointerdown', () => {
-        AM._getCtx(); // unlock audio on first gesture
+        AM._getCtx();
         AM.stopMusic();
         AM.playGameMusic();
         this.scene.start('GameScene');
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
 
-      // Spacebar also starts the game
       const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
       spaceKey.once('down', () => {
-        AM._getCtx();
-        AM.stopMusic();
-        AM.playGameMusic();
+        AM._getCtx(); AM.stopMusic(); AM.playGameMusic();
         this.scene.start('GameScene');
       });
 
-      // Decorative ship bobbing at bottom
-      const ship = this.add.image(width/2, 548, 'ship').setScale(2.2);
-      this.tweens.add({ targets: ship, y: 538, duration:1400, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
+      // ── Leaderboard panel ─────────────────────────────────────────────────
+      const lb = lbLoad();
+      const panelX = width/2 - 170, panelY = 372, panelW = 340, panelH = 156;
+      const panelGfx = this.add.graphics();
+      panelGfx.fillStyle(0x000033, 0.80);
+      panelGfx.fillRoundedRect(panelX, panelY, panelW, panelH, 8);
+      panelGfx.lineStyle(1, 0x00aaff, 0.7);
+      panelGfx.strokeRoundedRect(panelX, panelY, panelW, panelH, 8);
 
-      // Start menu music
+      this.add.text(width/2, panelY + 14, 'HIGH SCORES', {
+        font: 'bold 12px "Courier New"', fill: '#00ccff'
+      }).setOrigin(0.5);
+
+      const isNewHigh  = this.game.registry.get('isNewHighScore');
+      const justScore  = this.game.registry.get('score') || 0;
+
+      for (let i = 0; i < 5; i++) {
+        const entry   = lb[i];
+        const rowY    = panelY + 32 + i * 23;
+        const rankCol = '#88aacc';
+        const isNew   = isNewHigh && entry && entry.score === justScore;
+
+        this.add.text(panelX + 16, rowY, `#${i+1}`, {
+          font: '13px "Courier New"', fill: rankCol
+        });
+        if (entry) {
+          this.add.text(panelX + 50, rowY, `${entry.score}`, {
+            font: `bold 13px "Courier New"`, fill: isNew ? '#ffffff' : '#ffd700'
+          });
+          this.add.text(panelX + 140, rowY, `Lv ${entry.level}`, {
+            font: '12px "Courier New"', fill: '#88aacc'
+          });
+          this.add.text(panelX + 210, rowY, entry.date, {
+            font: '12px "Courier New"', fill: '#667788'
+          });
+        } else {
+          this.add.text(panelX + 50, rowY, '---', {
+            font: '13px "Courier New"', fill: '#334455'
+          });
+        }
+      }
+
       AM.playMenuMusic();
     }
 
-    /** Scroll the starfield downward each frame. */
     update() {
       if (this.starDots) {
         const h = this.scale.height;
-        this.starDots.forEach(s => {
-          s.y += s._speed;
-          if (s.y > h + 2) s.y = -2;
-        });
+        this.starDots.forEach(s => { s.y += s._speed; if (s.y > h + 2) s.y = -2; });
       }
     }
   }
@@ -634,147 +570,131 @@
     constructor() { super({ key: 'GameScene' }); }
 
     init() {
-      // Pull persistent state from registry
       this._level      = this.game.registry.get('currentLevel') || 1;
       this._score      = this.game.registry.get('score')        || 0;
       this._cfg        = LEVELS[this._level - 1];
 
-      // Per-level state — health carries over between levels (resets to 3 only on level 1)
-      this._health        = (this._level === 1)
-                              ? 3
-                              : (this.game.registry.get('health') || 3);
-      this._collected     = 0;
-      this._timeLeft      = this._cfg.timer;
-      this._shieldActive  = false;
-      this._vacuumActive  = false;
-      this._shieldTimer   = 0;
-      this._vacuumTimer   = 0;
-      this._hitCooldown   = 0;
-      this._paused        = false;
-      this._flameTick     = 0;
-      this._frameCount    = 0;
+      this._health       = this._level === 1 ? 3 : (this.game.registry.get('health') || 3);
+      this._collected    = 0;
+      this._timeLeft     = this._cfg.timer;
+      this._shieldActive = false;
+      this._vacuumActive = false;
+      this._shieldTimer  = 0;
+      this._vacuumTimer  = 0;
+      this._hitCooldown  = 0;
+      this._paused       = false;
+      this._flameTick    = 0;
+      this._frameCount   = 0;
+      this._gameEnded    = false;
+      this._introComplete = false;  // blocks input/timer until intro card finishes
+
       // Combo tracking
-      this._comboTimes   = [];  // timestamps of recent collects
-      this._comboActive  = false;
-      this._comboTimer   = 0;
+      this._comboTimes  = [];
+      this._comboActive = false;
+      this._comboTimer  = 0;
+
+      // Shooting
+      this._fireTimer = 0;  // seconds until next shot is allowed
     }
 
-    preload() {
-      buildTextures(this);
-    }
+    preload() { buildTextures(this); }
 
     create() {
       const { width, height } = this.scale;
       this.game.registry.set('bgColor', this._cfg.bg);
 
-      // ── Background ─────────────────────────────────────────────────────────
       buildStarfield(this, true);
 
-      // ── Per-frame graphics layer (flame, pulses, glints, vacuum circle) ────
+      // Per-frame FX layer (flame, pulses, glints, vacuum ring, bullet tails)
       this._fxGfx = this.add.graphics().setDepth(10);
+
+      // Off-screen enemy indicator layer (above world, below HUD)
+      this._indicatorGfx = this.add.graphics().setDepth(85);
 
       // ── Player ─────────────────────────────────────────────────────────────
       this._player = this.physics.add.image(width/2, height/2, 'ship')
-        .setDepth(20)
-        .setCollideWorldBounds(false)
-        .setDrag(130)
-        .setMaxVelocity(290);
-      // Physics hitbox matched to the 42×46 texture
+        .setDepth(20).setCollideWorldBounds(false).setDrag(130).setMaxVelocity(290);
       this._player.setSize(34, 40);
 
-      // ── Thruster particle emitter ──────────────────────────────────────────
+      // Thruster particle emitter
       this._thruster = this.add.particles(0, 0, 'particle', {
         lifespan: 200, speed: { min:35, max:80 },
         scale: { start:0.85, end:0 }, alpha: { start:0.8, end:0 },
         tint: [0xff8800, 0xff4400, 0xffdd00], blendMode: 'ADD', emitting: false
       }).setDepth(18);
 
+      // ── Bullets ────────────────────────────────────────────────────────────
+      this._bullets = this.physics.add.group();
+      // Destroy bullets that hit world bounds
+      this.physics.world.on('worldbounds', (body) => {
+        const go = body.gameObject;
+        if (go && go.active && go.texture && go.texture.key === 'bullet') go.destroy();
+      });
+
       // ── Debris ─────────────────────────────────────────────────────────────
       this._debrisGroup = this.physics.add.group();
-      this._glintData   = []; // {sprite, phase} for glinting pieces
+      this._glintData   = [];
       for (let i = 0; i < this._cfg.debris; i++) {
-        const x = Phaser.Math.Between(50, width - 50);
-        const y = Phaser.Math.Between(100, height - 60);
-        const variant = i % 6;
-        const piece = this._debrisGroup.create(x, y, `debris_${variant}`);
-        piece.setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
-        const spd = Phaser.Math.Between(18, 62);
-        const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
-        piece.setAngularVelocity(Phaser.Math.Between(-50, 50));
-        // 1 in 4 pieces gets a glint
-        if (i % 4 === 0) this._glintData.push({ sprite: piece, phase: Phaser.Math.FloatBetween(0, Math.PI*2) });
+        this._spawnDebrisPiece(
+          Phaser.Math.Between(60, width - 60),
+          Phaser.Math.Between(100, height - 60),
+          Math.random() < 0.7,  // 70% large
+          i % 6,
+          i % 4 === 0          // every 4th gets a glint
+        );
       }
 
       // ── Enemy Satellites ───────────────────────────────────────────────────
       this._satGroup  = this.physics.add.group();
-      this._satExtras = []; // {sprite, pulsePhase, flickerCount}
-      for (let i = 0; i < this._cfg.enemies; i++) {
-        this._spawnSatellite(i);
-      }
+      this._satExtras = [];
+      for (let i = 0; i < this._cfg.enemies; i++) this._spawnSatellite(i);
 
       // ── Power-ups ──────────────────────────────────────────────────────────
-      this._powerupGroup = this.physics.add.staticGroup();
-      this._powerupBobData = []; // {sprite, baseY}
+      this._powerupGroup   = this.physics.add.staticGroup();
+      this._powerupBobData = [];
       const puTypes = ['powerup_shield', 'powerup_vacuum'];
-      for (let i = 0; i < this._cfg.powerups; i++) {
-        const type = puTypes[i % 2];
-        this._spawnPowerup(type);
-      }
-      // Orbit dots for vacuum power-up (drawn in fxGfx each frame)
+      for (let i = 0; i < this._cfg.powerups; i++) this._spawnPowerup(puTypes[i % 2]);
       this._orbitAngle = 0;
 
-      // ── Shield FX overlay ─────────────────────────────────────────────────
+      // Shield FX graphics layer
       this._shieldFxGfx = this.add.graphics().setDepth(19);
 
       // ── Physics overlaps / colliders ──────────────────────────────────────
-      this.physics.add.overlap(this._player, this._debrisGroup, this._collectDebris, null, this);
+      this.physics.add.overlap(this._player,  this._debrisGroup,  this._collectDebris,  null, this);
       this.physics.add.collider(this._satGroup, this._debrisGroup, this._scatterDebris, null, this);
-      this.physics.add.collider(this._player, this._satGroup, this._playerHit, null, this);
-      this.physics.add.overlap(this._player, this._powerupGroup, this._collectPowerup, null, this);
+      this.physics.add.collider(this._player,  this._satGroup,    this._playerHit,     null, this);
+      this.physics.add.overlap(this._player,   this._powerupGroup,this._collectPowerup, null, this);
+      this.physics.add.overlap(this._bullets,  this._satGroup,    this._bulletHitSat,  null, this);
 
       // ── Input ──────────────────────────────────────────────────────────────
-      this._cursors = this.input.keyboard.createCursorKeys();
-      this._wasd    = this.input.keyboard.addKeys({
-        up:    Phaser.Input.Keyboard.KeyCodes.W,
-        down:  Phaser.Input.Keyboard.KeyCodes.S,
-        left:  Phaser.Input.Keyboard.KeyCodes.A,
-        right: Phaser.Input.Keyboard.KeyCodes.D,
+      this._cursors  = this.input.keyboard.createCursorKeys();
+      this._wasd     = this.input.keyboard.addKeys({
+        up: Phaser.Input.Keyboard.KeyCodes.W, down: Phaser.Input.Keyboard.KeyCodes.S,
+        left: Phaser.Input.Keyboard.KeyCodes.A, right: Phaser.Input.Keyboard.KeyCodes.D,
       });
-      this._keyP   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
-      this._keyESC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-
-      // Guard flag to prevent double-ending the game
-      this._gameEnded = false;
-
-      // ── Countdown timer ────────────────────────────────────────────────────
-      this._gameTimer = this.time.addEvent({
-        delay: 1000, callback: this._tickTimer,
-        callbackScope: this, repeat: this._cfg.timer - 1
-      });
+      this._keyP     = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+      this._keyESC   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+      this._spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
       // ── HUD ────────────────────────────────────────────────────────────────
       this._buildHUD();
 
-      // ── Pause overlay (hidden by default) ─────────────────────────────────
+      // ── Pause overlay ──────────────────────────────────────────────────────
       this._pauseOverlay = this.add.container(width/2, height/2).setDepth(100).setVisible(false);
-      const pauseBg = this.add.rectangle(0, 0, 340, 120, 0x000033, 0.88).setStrokeStyle(2, 0x4466ff);
-      const pauseTxt = this.add.text(0, -14, 'PAUSED', {
-        font: 'bold 44px "Courier New"', fill: '#ffffff',
-        stroke: '#003399', strokeThickness: 4
-      }).setOrigin(0.5);
-      const pauseSub = this.add.text(0, 32, 'Press P or ESC to resume', {
-        font: '16px "Courier New"', fill: '#aabbdd'
-      }).setOrigin(0.5);
+      const pauseBg  = this.add.rectangle(0, 0, 340, 120, 0x000033, 0.88).setStrokeStyle(2, 0x4466ff);
+      const pauseTxt = this.add.text(0, -14, 'PAUSED', { font:'bold 44px "Courier New"', fill:'#ffffff', stroke:'#003399', strokeThickness:4 }).setOrigin(0.5);
+      const pauseSub = this.add.text(0, 32, 'Press P or ESC to resume', { font:'16px "Courier New"', fill:'#aabbdd' }).setOrigin(0.5);
       this._pauseOverlay.add([pauseBg, pauseTxt, pauseSub]);
 
-      // ── Controls reminder (fades out after 5 s) ────────────────────────────
-      this._controlsTxt = this.add.text(10, height - 22,
-        'WASD / Arrows to move', {
-          font: '12px "Courier New"', fill: '#6688aa',
-          backgroundColor: '#00001188', padding: { x:6, y:3 }
-        }).setDepth(90).setAlpha(0.85);
+      // Controls reminder (fades out after 5 s)
+      this._controlsTxt = this.add.text(10, height - 22, 'WASD / Arrows  •  SPACE to shoot', {
+        font: '12px "Courier New"', fill: '#6688aa', backgroundColor: '#00001188', padding: { x:6, y:3 }
+      }).setDepth(90).setAlpha(0.85);
       this.tweens.add({ targets: this._controlsTxt, alpha: 0, delay: 5000, duration: 1200 });
+
+      // NOTE: game timer is started after the intro card fades out (_startGameTimer)
+      // Show the level intro card
+      this._showIntroCard();
     }
 
     // ── UPDATE ────────────────────────────────────────────────────────────────
@@ -782,57 +702,50 @@
       this._frameCount++;
       const dt = delta / 1000;
 
-      // Scroll stars downward
+      // Scroll stars
       if (this.starDots) {
-        this.starDots.forEach(s => {
-          s.y += s._speed;
-          if (s.y > this.scale.height + 2) s.y = -2;
-        });
+        this.starDots.forEach(s => { s.y += s._speed; if (s.y > this.scale.height + 2) s.y = -2; });
       }
 
-      // Toggle pause
+      // Pause toggle (allowed during intro)
       if (Phaser.Input.Keyboard.JustDown(this._keyP) || Phaser.Input.Keyboard.JustDown(this._keyESC)) {
         this._paused ? this._resume() : this._pause();
       }
       if (this._paused) return;
 
-      // Clear per-frame FX layer
       this._fxGfx.clear();
       this._shieldFxGfx.clear();
+      this._indicatorGfx.clear();
 
-      // Movement + flame
-      this._handleInput(dt);
+      // Block gameplay during intro card
+      if (this._introComplete) {
+        this._handleInput(dt);
+      } else {
+        // Still draw idle flame during intro so ship looks alive
+        this._drawFlame(false);
+      }
 
-      // Satellite AI + visual effects
       this._updateSatellites(dt);
-
-      // Power-up animation (bob, orbit dots)
       this._updatePowerupFX(time);
-
-      // Active power-up timers
       this._updatePowerupTimers(dt);
+      if (this._vacuumActive) { this._applyVacuumMagnet(); this._drawVacuumCircle(); }
 
-      // Vacuum magnet pull
-      if (this._vacuumActive) this._applyVacuumMagnet();
-
-      // Draw vacuum radius preview circle
-      if (this._vacuumActive) this._drawVacuumCircle();
-
-      // ── Player: hard boundary walls (no wrap), debris/enemies still wrap ──
+      // Player hard boundary clamping
       const { width, height } = this.scale;
-      const bm = 20; // boundary margin px
-      if (this._player.x < bm)          { this._player.x = bm;          this._player.body.velocity.x = 0; }
-      if (this._player.x > width - bm)  { this._player.x = width - bm;  this._player.body.velocity.x = 0; }
-      if (this._player.y < bm)          { this._player.y = bm;          this._player.body.velocity.y = 0; }
-      if (this._player.y > height - bm) { this._player.y = height - bm; this._player.body.velocity.y = 0; }
+      const bm = 20;
+      if (this._player.x < bm)         { this._player.x = bm;         this._player.body.velocity.x = 0; }
+      if (this._player.x > width - bm)  { this._player.x = width - bm; this._player.body.velocity.x = 0; }
+      if (this._player.y < bm)          { this._player.y = bm;         this._player.body.velocity.y = 0; }
+      if (this._player.y > height - bm) { this._player.y = height - bm;this._player.body.velocity.y = 0; }
+
+      // Debris and enemies still wrap
       this._debrisGroup.getChildren().forEach(d => this.physics.world.wrap(d, 22));
       this._satGroup.getChildren().forEach(s => this.physics.world.wrap(s, 23));
 
-      // ── Proximity danger ring — pulsing red circle around player ──────────
+      // Proximity danger ring
       const dangerClose = this._satExtras.some(ext => {
         if (!ext.sprite.active) return false;
-        const dx = this._player.x - ext.sprite.x;
-        const dy = this._player.y - ext.sprite.y;
+        const dx = this._player.x - ext.sprite.x, dy = this._player.y - ext.sprite.y;
         return Math.sqrt(dx*dx + dy*dy) < 180;
       });
       if (dangerClose) {
@@ -849,31 +762,71 @@
         this._shieldFxGfx.fillCircle(this._player.x, this._player.y, 38);
       }
 
-      // Debris glints
       this._drawGlints(time);
-
-      // Satellite pulse glows (drawn on fxGfx)
       this._drawSatPulses(time);
+      this._drawBulletTails();
+      this._drawIndicators();
 
       // Hit cooldown flash
       if (this._hitCooldown > 0) {
         this._hitCooldown -= dt;
         this._player.setAlpha(Math.sin(time * 0.025) > 0 ? 1 : 0.3);
-      } else {
-        this._player.setAlpha(1);
-      }
+      } else { this._player.setAlpha(1); }
 
       // Combo timer
-      if (this._comboActive) {
-        this._comboTimer -= dt;
-        if (this._comboTimer <= 0) this._comboActive = false;
-      }
+      if (this._comboActive) { this._comboTimer -= dt; if (this._comboTimer <= 0) this._comboActive = false; }
 
-      // Update HUD
       this._updateHUD(time);
     }
 
-    // ── INPUT ─────────────────────────────────────────────────────────────────
+    // ── LEVEL INTRO CARD ──────────────────────────────────────────────────────
+    /** Shows the 2.2-second intro overlay and then starts the game timer. */
+    _showIntroCard() {
+      const { width, height } = this.scale;
+      const overlay = this.add.rectangle(width/2, height/2, width, height, 0x000022, 0.85).setDepth(200).setAlpha(0);
+      const lvlTxt  = this.add.text(width/2, height/2 - 55, `LEVEL ${this._level}`, {
+        font: 'bold 52px "Courier New"', fill: '#00ffff',
+        stroke: '#003366', strokeThickness: 5,
+        shadow: { color: '#00aaff', blur: 20, fill: true }
+      }).setDepth(201).setOrigin(0.5).setAlpha(0);
+      const infoTxt = this.add.text(width/2, height/2 + 14,
+        `Collect ${this._cfg.debris} debris  —  ${this._cfg.timer} seconds  —  ${this._cfg.enemies} enemies`, {
+        font: '20px "Courier New"', fill: '#ffffff'
+      }).setDepth(201).setOrigin(0.5).setAlpha(0);
+      const ctrlTxt = this.add.text(width/2, height/2 + 54, 'SPACE to shoot  •  WASD / Arrows to move', {
+        font: '15px "Courier New"', fill: '#888888'
+      }).setDepth(201).setOrigin(0.5).setAlpha(0);
+
+      const items = [overlay, lvlTxt, infoTxt, ctrlTxt];
+      AM.playIntroSound();
+
+      // Fade in 0.3s → hold 1.6s → fade out 0.3s
+      this.tweens.add({
+        targets: items, alpha: 1, duration: 300, ease: 'Linear',
+        onComplete: () => {
+          this.time.delayedCall(1600, () => {
+            this.tweens.add({
+              targets: items, alpha: 0, duration: 300, ease: 'Linear',
+              onComplete: () => {
+                items.forEach(i => i.destroy());
+                this._introComplete = true;
+                this._startGameTimer();
+              }
+            });
+          });
+        }
+      });
+    }
+
+    /** Creates the countdown timer event. Called once after the intro finishes. */
+    _startGameTimer() {
+      this._gameTimer = this.time.addEvent({
+        delay: 1000, callback: this._tickTimer,
+        callbackScope: this, repeat: this._cfg.timer - 1
+      });
+    }
+
+    // ── INPUT & SHOOTING ──────────────────────────────────────────────────────
     _handleInput(dt) {
       const thrust = 350;
       const up    = this._cursors.up.isDown    || this._wasd.up.isDown;
@@ -892,10 +845,7 @@
       if (moving) {
         this._player.setAcceleration(vx * thrust, vy * thrust);
         const targetRot = Math.atan2(vy, vx) + Math.PI / 2;
-        this._player.setRotation(
-          Phaser.Math.Angle.RotateTo(this._player.rotation, targetRot, 0.13)
-        );
-        // Thruster particles — offset scaled to match new ship size
+        this._player.setRotation(Phaser.Math.Angle.RotateTo(this._player.rotation, targetRot, 0.13));
         this._thruster.setPosition(
           this._player.x + Math.cos(this._player.rotation + Math.PI) * 8,
           this._player.y + Math.sin(this._player.rotation + Math.PI) * 8
@@ -905,31 +855,49 @@
         this._player.setAcceleration(0, 0);
       }
 
-      // Animated engine flame (drawn onto fxGfx, behind player)
       this._drawFlame(moving);
+
+      // Shooting — spacebar, rate-limited, max 6 on screen
+      this._fireTimer -= dt;
+      if (this._spaceKey.isDown && this._fireTimer <= 0 && this._bullets.getChildren().length < 6) {
+        this._fireProjectile();
+        this._fireTimer = 0.35;
+      }
     }
 
-    /**
-     * Draw animated engine flames every frame.
-     * Idle: faint short flicker always visible.
-     * Thrust: three-ellipse teardrop plume (28 px).
-     * Boost (Super Vacuum active): four-ellipse plume with blue tip (48 px), 30% wider.
-     * Flames drawn on _fxGfx (depth 10) so they appear behind the ship (depth 20).
-     */
+    /** Fire one laser bolt from the ship nose in the ship's facing direction. */
+    _fireProjectile() {
+      const rot = this._player.rotation;
+      // Nose of ship is at local (0, -22) → world: (px + sin(rot)*22, py - cos(rot)*22)
+      const spawnX = this._player.x + Math.sin(rot) * 22;
+      const spawnY = this._player.y - Math.cos(rot) * 22;
+
+      const bullet = this._bullets.create(spawnX, spawnY, 'bullet');
+      bullet.setDepth(17).setRotation(rot);
+      bullet.setCollideWorldBounds(true);
+      bullet.body.onWorldBounds = true;
+      bullet.body.setSize(8, 16);
+
+      // Velocity in ship facing direction: local -y → world (sin(rot), -cos(rot))
+      const speed = 520;
+      bullet.setVelocity(Math.sin(rot) * speed, -Math.cos(rot) * speed);
+
+      AM.playShootSound();
+    }
+
+    // ── FLAME DRAWING ─────────────────────────────────────────────────────────
     _drawFlame(moving) {
       this._flameTick++;
-      const px  = this._player.x;
-      const py  = this._player.y;
-      const rot = this._player.rotation;
-      // Nozzle at engine end of ship (behind along facing direction)
-      // Engine nozzle is at local (0, +23) — bottom of fuselage in local space.
-      // Local +y direction in world coords: (-sin(rot), +cos(rot)).
+      const px  = this._player.x, py = this._player.y, rot = this._player.rotation;
+
+      // Engine nozzle at local (0, +23) — bottom of fuselage
+      // Local +y → world: (-sin(rot), +cos(rot))
       const nozzleX = px - Math.sin(rot) * 23;
       const nozzleY = py + Math.cos(rot) * 23;
-      // Flame extends in the local +y direction, which has world angle rot + π/2.
+      // Flame extends in local +y direction → world angle: rot + π/2
       const flameDir = rot + Math.PI / 2;
 
-      // Port offsets (two engine ports side by side)
+      // Two engine ports side by side (local x-axis = world (cos(rot), sin(rot)))
       const perpCos = Math.cos(rot), perpSin = Math.sin(rot);
       const portOff = 3;
       const ports = [
@@ -938,113 +906,245 @@
       ];
 
       const isBoost = this._vacuumActive;
-
       ports.forEach(port => {
         if (moving) {
-          // Thrust or boost plume — three overlapping ellipses
-          const fh  = isBoost ? 48 : 28;
-          const wm  = isBoost ? 1.3 : 1.0;
-          // Base ellipse — orange, closest to engine
+          const fh = isBoost ? 48 : 28, wm = isBoost ? 1.3 : 1.0;
           this._drawFlameEllipse(port.x, port.y, flameDir, 5 * wm, fh * 0.28, 0xff6600, 0.9);
-          // Mid ellipse — yellow-orange
           this._drawFlameEllipse(port.x, port.y, flameDir, 3.5 * wm, fh * 0.60, 0xffaa00, 0.75);
-          // Tip ellipse — bright yellow
           this._drawFlameEllipse(port.x, port.y, flameDir, 2.0 * wm, fh * 0.88, 0xffff00, 0.60);
-          if (isBoost) {
-            // Electric blue tip for boost
-            this._drawFlameEllipse(port.x, port.y, flameDir, 1.5, fh, 0x00aaff, 0.50);
-          }
+          if (isBoost) this._drawFlameEllipse(port.x, port.y, flameDir, 1.5, fh, 0x00aaff, 0.50);
         } else {
-          // Idle exhaust — short faint orange flicker, alternates 5 ↔ 7 px each frame
           const idleH = (this._flameTick % 2 === 0) ? 5 : 7;
           this._drawFlameEllipse(port.x, port.y, flameDir, 2.5, idleH, 0xff6600, 0.40);
         }
       });
     }
 
-    /** Draw a rotated ellipse extending from nozzle in flameDir on _fxGfx. */
     _drawFlameEllipse(nozzleX, nozzleY, flameDir, rx, ry, color, alpha) {
       const cosA = Math.cos(flameDir), sinA = Math.sin(flameDir);
-      // Offset centre so base of ellipse sits at the nozzle
-      const cx = nozzleX + cosA * (ry * 0.5);
-      const cy = nozzleY + sinA * (ry * 0.5);
-      const steps = 10;
-      const pts = [];
+      const cx = nozzleX + cosA * (ry * 0.5), cy = nozzleY + sinA * (ry * 0.5);
+      const steps = 10, pts = [];
       for (let i = 0; i < steps; i++) {
-        const t  = (i / steps) * Math.PI * 2;
-        const lx = Math.cos(t) * rx;   // perpendicular axis
-        const ly = Math.sin(t) * ry;   // flame axis
+        const t = (i / steps) * Math.PI * 2;
+        const lx = Math.cos(t) * rx, ly = Math.sin(t) * ry;
         pts.push({ x: cx - sinA * lx + cosA * ly, y: cy + cosA * lx + sinA * ly });
       }
       this._fxGfx.fillStyle(color, alpha);
       this._fxGfx.fillPoints(pts, true);
     }
 
-    // ── SATELLITE AI + FX ─────────────────────────────────────────────────────
-    _spawnSatellite(index) {
+    /** Draw glowing tails behind active bullets on the _fxGfx layer. */
+    _drawBulletTails() {
+      this._bullets.getChildren().forEach(b => {
+        if (!b.active) return;
+        const rot = b.rotation;
+        // Tail dots extend behind bullet: local +y direction = engine rear
+        for (let i = 0; i < 3; i++) {
+          const dist  = (i + 1) * 5;
+          const alpha = 0.5 - i * 0.15;
+          const tx = b.x - Math.sin(rot) * dist;
+          const ty = b.y + Math.cos(rot) * dist;
+          this._fxGfx.fillStyle(0x00ffff, alpha);
+          this._fxGfx.fillCircle(tx, ty, 2);
+        }
+      });
+    }
+
+    // ── BULLET → SATELLITE HIT ────────────────────────────────────────────────
+    _bulletHitSat(bullet, satellite) {
+      if (!bullet.active || !satellite.active) return;
+      bullet.destroy();
+
+      const ext = this._satExtras.find(e => e.sprite === satellite);
+      if (!ext) return;
+
+      ext.hp--;
+      AM.playHitSound();
+
+      // White flash for ~2 frames
+      satellite.setTint(0xffffff);
+      this.time.delayedCall(33, () => { if (satellite.active) satellite.clearTint(); });
+
+      if (ext.hp <= 0) {
+        this._spawnExplosion(satellite.x, satellite.y);
+        AM.playEnemyDestroySound();
+        this._score += 50;
+
+        const pop = this.add.text(satellite.x, satellite.y - 20, '+50', {
+          font: 'bold 20px "Courier New"', fill: '#ffdd44',
+          shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
+        }).setDepth(50).setOrigin(0.5);
+        this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 800, onComplete: () => pop.destroy() });
+
+        this._satExtras = this._satExtras.filter(e => e.sprite !== satellite);
+        satellite.destroy();
+
+        // Schedule respawn if cap not already reached
+        const activeCount = this._satExtras.filter(e => e.sprite.active).length;
+        if (activeCount < this._cfg.enemyCap) {
+          this.time.delayedCall(this._cfg.respawnDelay, this._respawnEnemy, [], this);
+        }
+      }
+    }
+
+    /** Spawn 10 particle sparks at (x, y) using plain GameObjects + tweens. */
+    _spawnExplosion(x, y) {
+      const colors = [0xff4400, 0xff8800, 0xffcc00];
+      for (let i = 0; i < 10; i++) {
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const r     = 3 + Math.random() * 2;
+        const ang   = Math.random() * Math.PI * 2;
+        const speed = 60 + Math.random() * 100;
+        const dot   = this.add.circle(x, y, r, color).setDepth(30);
+        this.tweens.add({
+          targets: dot,
+          x: x + Math.cos(ang) * speed * 0.6,
+          y: y + Math.sin(ang) * speed * 0.6,
+          alpha: 0, scaleX: 0, scaleY: 0,
+          duration: 600, ease: 'Power2.easeOut',
+          onComplete: () => dot.destroy()
+        });
+      }
+    }
+
+    // ── ENEMY RESPAWNING ──────────────────────────────────────────────────────
+    /** Called on a timer after an enemy is destroyed. Spawns a new satellite at a screen edge. */
+    _respawnEnemy() {
+      if (this._gameEnded) return;
+      const activeCount = this._satExtras.filter(e => e.sprite.active).length;
+      if (activeCount >= this._cfg.enemyCap) return;
+
       const { width, height } = this.scale;
-      // Spawn near corners, cycling through them
-      const corners = [
-        [60, 60], [width-60, 60], [60, height-60], [width-60, height-60],
-        [width/2, 50]
-      ];
-      const [sx, sy] = corners[index % corners.length];
+      const margin = 30;
+      const edge   = Math.floor(Math.random() * 4);
+      let sx, sy;
+      switch (edge) {
+        case 0: sx = Phaser.Math.Between(0, width); sy = -margin; break;
+        case 1: sx = width + margin; sy = Phaser.Math.Between(50, height); break;
+        case 2: sx = Phaser.Math.Between(0, width); sy = height + margin; break;
+        default: sx = -margin; sy = Phaser.Math.Between(50, height); break;
+      }
+
       const sat = this._satGroup.create(sx, sy, 'satellite')
-        .setBounce(0.55)
-        .setCollideWorldBounds(false)
+        .setBounce(0.55).setCollideWorldBounds(false)
         .setMaxVelocity(this._cfg.enemySpeed * 1.3)
         .setAngularVelocity(Phaser.Math.Between(40, 90))
         .setDepth(16);
-      // Physics body matched to reduced 46×46 texture
       sat.setSize(40, 40);
-      this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0 });
+      this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0, hp: this._cfg.enemyHp });
+      this._showSpawnWarning(sx, sy);
+    }
 
-      // From level 2+, show a spawn warning arrow
+    // ── SATELLITE AI + FX ─────────────────────────────────────────────────────
+    _spawnSatellite(index) {
+      const { width, height } = this.scale;
+      const corners = [[60,60],[width-60,60],[60,height-60],[width-60,height-60],[width/2,50]];
+      const [sx, sy] = corners[index % corners.length];
+      const sat = this._satGroup.create(sx, sy, 'satellite')
+        .setBounce(0.55).setCollideWorldBounds(false)
+        .setMaxVelocity(this._cfg.enemySpeed * 1.3)
+        .setAngularVelocity(Phaser.Math.Between(40, 90))
+        .setDepth(16);
+      sat.setSize(40, 40);
+      this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0, hp: this._cfg.enemyHp });
       if (this._level >= 2) this._showSpawnWarning(sx, sy);
     }
 
-    /** Move each satellite toward the player using seek behaviour. */
     _updateSatellites(dt) {
+      if (!this._introComplete) return; // enemies hold still during intro
       const speed = this._cfg.enemySpeed;
       this._satExtras.forEach(({ sprite }) => {
         if (!sprite.active) return;
-        const dx = this._player.x - sprite.x;
-        const dy = this._player.y - sprite.y;
+        const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
         const d  = Math.sqrt(dx*dx + dy*dy) || 1;
         sprite.setVelocity((dx/d)*speed, (dy/d)*speed);
       });
     }
 
-    /** Draw pulsing red glow circles around each satellite. */
     _drawSatPulses(time) {
       this._satExtras.forEach(ext => {
         if (!ext.sprite.active) return;
         const { sprite, pulsePhase } = ext;
-        const dx    = this._player.x - sprite.x;
-        const dy    = this._player.y - sprite.y;
+        const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
         const dist2 = Math.sqrt(dx*dx + dy*dy);
         const near  = dist2 < 300;
         const speed = near ? 3.5 : 1.8;
-
-        // Pulse scale oscillates
         const pulse = 0.8 + 0.55 * Math.sin(time * 0.001 * speed + pulsePhase);
         const alpha = near ? 0.55 : 0.3;
-        const r     = 28 * pulse;
-
         this._fxGfx.fillStyle(near ? 0xff0000 : 0xcc0000, alpha);
-        this._fxGfx.fillCircle(sprite.x, sprite.y, r);
-
-        // Red tint flicker every 20 frames
+        this._fxGfx.fillCircle(sprite.x, sprite.y, 28 * pulse);
         ext.flickerCount++;
-        if (ext.flickerCount % 20 === 0) {
-          sprite.setTint(near ? 0xff6666 : 0xff3333);
-        } else if (ext.flickerCount % 20 === 10) {
-          sprite.clearTint();
-        }
+        if      (ext.flickerCount % 20 === 0)  sprite.setTint(near ? 0xff6666 : 0xff3333);
+        else if (ext.flickerCount % 20 === 10) sprite.clearTint();
       });
     }
 
-    // ── DEBRIS GLINTS ─────────────────────────────────────────────────────────
+    // ── OFF-SCREEN ENEMY INDICATORS ───────────────────────────────────────────
+    /** Draws small red arrows on screen edges pointing toward off-screen or near-edge enemies. */
+    _drawIndicators() {
+      const { width, height } = this.scale;
+      const HUD_H = 50;
+      const candidates = [];
+
+      this._satExtras.forEach(ext => {
+        if (!ext.sprite.active) return;
+        const sx = ext.sprite.x, sy = ext.sprite.y;
+        const offscreen = sx < 0 || sx > width || sy < HUD_H || sy > height;
+        const nearEdge  = !offscreen && (sx < 40 || sx > width - 40 || sy < HUD_H + 40 || sy > height - 40);
+        if (!offscreen && !nearEdge) return;
+
+        // Nearest edge
+        const dL = sx, dR = width - sx, dT = sy - HUD_H, dB = height - sy;
+        const minD = Math.min(dL, dR, dT, dB);
+
+        let ex, ey, arrowRot;
+        if      (minD === dL) { ex = 16;       ey = Phaser.Math.Clamp(sy, HUD_H+14, height-14); arrowRot = Math.PI/2; }
+        else if (minD === dR) { ex = width-16; ey = Phaser.Math.Clamp(sy, HUD_H+14, height-14); arrowRot = -Math.PI/2; }
+        else if (minD === dT) { ex = Phaser.Math.Clamp(sx, 14, width-14); ey = HUD_H+16; arrowRot = 0; }
+        else                  { ex = Phaser.Math.Clamp(sx, 14, width-14); ey = height-16; arrowRot = Math.PI; }
+
+        candidates.push({ ex, ey, arrowRot });
+      });
+
+      // Deduplicate: skip arrows within 30px on the same side
+      const drawn = [];
+      candidates.forEach(c => {
+        const clash = drawn.some(d =>
+          Math.abs(c.arrowRot - d.arrowRot) < 0.01 &&
+          Math.hypot(c.ex - d.ex, c.ey - d.ey) < 30
+        );
+        if (!clash) drawn.push(c);
+      });
+
+      // Draw each arrow: filled triangle + white border, rotated
+      drawn.forEach(({ ex, ey, arrowRot }) => {
+        const cos = Math.cos(arrowRot), sin = Math.sin(arrowRot);
+        const tp = (lx, ly) => ({ x: ex + lx*cos - ly*sin, y: ey + lx*sin + ly*cos });
+        const p0 = tp(0, 7), p1 = tp(-5, -7), p2 = tp(5, -7);
+        this._indicatorGfx.fillStyle(0xff2200, 0.9);
+        this._indicatorGfx.fillPoints([p0, p1, p2], true);
+        this._indicatorGfx.lineStyle(1, 0xffffff, 0.8);
+        this._indicatorGfx.strokePoints([p0, p1, p2], true);
+      });
+    }
+
+    // ── DEBRIS ───────────────────────────────────────────────────────────────
+    /** Spawn one debris piece at (x, y). Used both at level start and for split pieces. */
+    _spawnDebrisPiece(x, y, isLarge, variant, addGlint = false) {
+      const piece = this._debrisGroup.create(x, y, `debris_${variant}`);
+      piece.setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
+      piece._isLarge = isLarge;
+      piece._pts     = isLarge ? 10 : 5;
+      piece._variant = variant;
+      if (!isLarge) piece.setScale(0.6);
+      const spd = Phaser.Math.Between(18, 62);
+      const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
+      piece.setAngularVelocity(Phaser.Math.Between(-50, 50));
+      if (addGlint) this._glintData.push({ sprite: piece, phase: Phaser.Math.FloatBetween(0, Math.PI*2) });
+      return piece;
+    }
+
     _drawGlints(time) {
       this._glintData = this._glintData.filter(g => g.sprite.active);
       this._glintData.forEach(({ sprite, phase }) => {
@@ -1054,34 +1154,25 @@
       });
     }
 
-    // ── POWER-UP ANIMATION ────────────────────────────────────────────────────
+    // ── POWER-UPS ─────────────────────────────────────────────────────────────
     _spawnPowerup(type) {
       const { width, height } = this.scale;
-      const x = Phaser.Math.Between(60, width - 60);
-      const y = Phaser.Math.Between(80, height - 80);
+      const x  = Phaser.Math.Between(60, width - 60);
+      const y  = Phaser.Math.Between(80, height - 80);
       const pu = this._powerupGroup.create(x, y, type).setDepth(14);
       this._powerupBobData.push({ sprite: pu, baseY: y, type });
     }
 
     _updatePowerupFX(time) {
       this._orbitAngle += 0.04;
-      // Remove destroyed entries
       this._powerupBobData = this._powerupBobData.filter(d => d.sprite.active);
-
       this._powerupBobData.forEach(d => {
-        // Bob up and down on sine wave
         d.sprite.y = d.baseY + Math.sin(time * 0.002) * 7;
-        d.sprite.refreshBody(); // update static body position
-
-        // Shield: bob only — no rotation (rotation removed per spec)
-
-        // Vacuum: draw orbiting white dots
+        d.sprite.refreshBody();
         if (d.type === 'powerup_vacuum' && d.sprite.active) {
           for (let i = 0; i < 4; i++) {
             const ang = this._orbitAngle + (i / 4) * Math.PI * 2;
-            const orbitR = 22;
-            const ox = d.sprite.x + Math.cos(ang) * orbitR;
-            const oy = d.sprite.y + Math.sin(ang) * orbitR;
+            const ox  = d.sprite.x + Math.cos(ang) * 22, oy = d.sprite.y + Math.sin(ang) * 22;
             this._fxGfx.fillStyle(0xffffff, 0.75);
             this._fxGfx.fillCircle(ox, oy, 2.5);
           }
@@ -1089,102 +1180,96 @@
       });
     }
 
-    // ── VACUUM CIRCLE PREVIEW ─────────────────────────────────────────────────
     _drawVacuumCircle() {
-      const { x, y } = this._player;
-      const dashes = 26;
+      const { x, y } = this._player, dashes = 26;
       this._fxGfx.lineStyle(1.5, 0xffcc00, 0.45);
       for (let i = 0; i < dashes; i++) {
-        const a1 = (i / dashes) * Math.PI * 2;
-        const a2 = a1 + (Math.PI * 2 / dashes) * 0.55;
+        const a1 = (i / dashes) * Math.PI * 2, a2 = a1 + (Math.PI * 2 / dashes) * 0.55;
         this._fxGfx.beginPath();
         this._fxGfx.arc(x, y, VACUUM_RADIUS, a1, a2, false, 0.05);
         this._fxGfx.strokePath();
       }
     }
 
-    // ── POWER-UP TIMERS ───────────────────────────────────────────────────────
     _updatePowerupTimers(dt) {
-      if (this._shieldActive) {
-        this._shieldTimer -= dt;
-        if (this._shieldTimer <= 0) {
-          this._shieldActive = false;
-          this._player.clearTint();
-        }
-      }
-      if (this._vacuumActive) {
-        this._vacuumTimer -= dt;
-        if (this._vacuumTimer <= 0) {
-          this._vacuumActive = false;
-          this._player.clearTint();
-        }
-      }
+      if (this._shieldActive) { this._shieldTimer -= dt; if (this._shieldTimer <= 0) { this._shieldActive = false; this._player.clearTint(); } }
+      if (this._vacuumActive) { this._vacuumTimer -= dt; if (this._vacuumTimer <= 0) { this._vacuumActive = false; this._player.clearTint(); } }
     }
 
-    // ── VACUUM MAGNET ─────────────────────────────────────────────────────────
     _applyVacuumMagnet() {
       const pull = 210;
       this._debrisGroup.getChildren().forEach(d => {
-        const dx = this._player.x - d.x;
-        const dy = this._player.y - d.y;
+        const dx = this._player.x - d.x, dy = this._player.y - d.y;
         const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-        if (dist < VACUUM_RADIUS) {
-          d.setVelocity(
-            d.body.velocity.x + (dx/dist) * pull * 0.06,
-            d.body.velocity.y + (dy/dist) * pull * 0.06
-          );
-        }
+        if (dist < VACUUM_RADIUS) d.setVelocity(d.body.velocity.x + (dx/dist)*pull*0.06, d.body.velocity.y + (dy/dist)*pull*0.06);
       });
     }
 
     // ── COLLISION CALLBACKS ───────────────────────────────────────────────────
     _collectDebris(player, piece) {
       piece.destroy();
-      // Remove from glint list
       this._glintData = this._glintData.filter(g => g.sprite !== piece);
 
-      const pts = this._comboActive ? 20 : 10;
+      const pts = (this._comboActive ? 2 : 1) * (piece._pts || 10);
       this._score += pts;
       this._collected++;
       AM.playCollectSound();
 
-      // Score pop-up — 20px bold, black drop shadow, spawns above debris, floats 40px in 0.8s
       const popTxt = this._comboActive ? `+${pts} x2!` : `+${pts}`;
       const pop = this.add.text(piece.x, piece.y - 18, popTxt, {
-        font: 'bold 20px "Courier New"',
-        fill: this._comboActive ? '#ffdd00' : '#ffff44',
-        shadow: { offsetX: 2, offsetY: 2, color: '#000000', fill: true }
+        font: 'bold 20px "Courier New"', fill: this._comboActive ? '#ffdd00' : '#ffff44',
+        shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
       }).setDepth(50).setOrigin(0.5);
       this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 800, onComplete: () => pop.destroy() });
 
-      // Combo tracking
       const now = this.time.now;
       this._comboTimes.push(now);
       this._comboTimes = this._comboTimes.filter(t => now - t < 4000);
-      if (this._comboTimes.length >= 3 && !this._comboActive) {
-        this._activateCombo();
-      }
+      if (this._comboTimes.length >= 3 && !this._comboActive) this._activateCombo();
 
       if (this._collected >= this._cfg.debris) this._endGame(true);
     }
 
     _activateCombo() {
-      this._comboActive = true;
-      this._comboTimer  = 5;
-      // Anchor to current player position, float upward and fade same as score pop-ups
+      this._comboActive = true; this._comboTimer = 5;
       const { x, y } = this._player;
       const comboTxt = this.add.text(x, y - 50, 'x2 COMBO!', {
-        font: 'bold 24px "Courier New"',
-        fill: '#ffd700',
-        shadow: { offsetX: 2, offsetY: 2, color: '#000000', fill: true }
+        font: 'bold 24px "Courier New"', fill: '#ffd700',
+        shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
       }).setDepth(60).setOrigin(0.5);
       this.tweens.add({ targets: comboTxt, y: y - 90, alpha: 0, duration: 1800, onComplete: () => comboTxt.destroy() });
     }
 
+    /** Called when enemy hits debris. Large pieces split into 2 smalls; small pieces just scatter. */
     _scatterDebris(satellite, piece) {
-      const ang = Phaser.Math.FloatBetween(0, Math.PI*2);
-      const spd = Phaser.Math.Between(70, 160);
-      piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
+      if (!piece.active) return;
+
+      if (piece._isLarge) {
+        const origVx  = piece.body.velocity.x, origVy = piece.body.velocity.y;
+        const origAng = Math.atan2(origVy, origVx);
+        const origSpd = Math.sqrt(origVx*origVx + origVy*origVy) || 80;
+        const px = piece.x, py = piece.y, variant = piece._variant || 0;
+
+        piece.destroy();
+        this._glintData = this._glintData.filter(g => g.sprite.active);
+
+        // Spawn 2 small pieces diverging at ±60°
+        for (let i = 0; i < 2; i++) {
+          const spread  = (i === 0 ? -1 : 1) * Phaser.Math.FloatBetween(Math.PI/5, Math.PI/2.5);
+          const newAng  = origAng + spread;
+          const spd     = origSpd * Phaser.Math.FloatBetween(0.7, 1.3);
+          const small   = this._debrisGroup.create(px, py, `debris_${variant}`);
+          small.setScale(0.6).setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
+          small.setVelocity(Math.cos(newAng)*spd, Math.sin(newAng)*spd);
+          small.setAngularVelocity(Phaser.Math.Between(-50, 50));
+          small._isLarge = false; small._pts = 5; small._variant = variant;
+        }
+      } else {
+        // Small piece: just scatter velocity
+        const ang = Phaser.Math.FloatBetween(0, Math.PI*2);
+        const spd = Phaser.Math.Between(70, 160);
+        piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
+      }
     }
 
     _playerHit(player, satellite) {
@@ -1192,13 +1277,9 @@
       this._health--;
       this._hitCooldown = 1.6;
       AM.playHitSound();
-
-      // Screen shake
       this.cameras.main.shake(200, 0.008);
-      // Hit flash — red for ~3 frames then clear
       player.setTint(0xff3300);
       this.time.delayedCall(55, () => { if (player.active) player.clearTint(); });
-
       if (this._health <= 0) this._endGame(false);
     }
 
@@ -1206,19 +1287,14 @@
       const type = powerup.texture.key;
       powerup.destroy();
       this._powerupBobData = this._powerupBobData.filter(d => d.sprite.active);
-
       if (type === 'powerup_shield') {
-        AM.playPowerUpSound(); // rising arpeggio (unchanged)
-        this._shieldActive = true;
-        this._shieldTimer  = 8;
-        player.setTint(0x44aaff);
-        this._showStatusPop('SHIELD ON  8s', 0x44aaff);
+        AM.playPowerUpSound();
+        this._shieldActive = true; this._shieldTimer = 8;
+        player.setTint(0x44aaff); this._showStatusPop('SHIELD ON  8s', 0x44aaff);
       } else {
-        AM.playRocketBoostSound(); // white-noise rocket boost (replaces arpeggio)
-        this._vacuumActive = true;
-        this._vacuumTimer  = 10;
-        player.setTint(0xffcc00);
-        this._showStatusPop('SUPER VACUUM  10s', 0xffcc00);
+        AM.playRocketBoostSound();
+        this._vacuumActive = true; this._vacuumTimer = 10;
+        player.setTint(0xffcc00); this._showStatusPop('SUPER VACUUM  10s', 0xffcc00);
       }
     }
 
@@ -1226,35 +1302,27 @@
       const { width } = this.scale;
       const txt = this.add.text(width/2, 90, msg, {
         font: 'bold 18px "Courier New"', fill: '#' + color.toString(16).padStart(6,'0'),
-        stroke: '#000000', strokeThickness: 3, backgroundColor: '#00000088',
-        padding: { x:10, y:5 }
+        stroke: '#000000', strokeThickness: 3, backgroundColor: '#00000088', padding: { x:10, y:5 }
       }).setDepth(60).setOrigin(0.5);
       this.tweens.add({ targets: txt, y: 65, alpha: 0, delay: 1200, duration: 800, onComplete: () => txt.destroy() });
     }
 
-    // ── SPAWN WARNING ARROW ───────────────────────────────────────────────────
     _showSpawnWarning(spawnX, spawnY) {
       const { width, height } = this.scale;
-      // Determine which screen edge the spawn point is nearest
-      const distLeft   = spawnX;
-      const distRight  = width  - spawnX;
-      const distTop    = spawnY;
-      const distBottom = height - spawnY;
-      const minDist    = Math.min(distLeft, distRight, distTop, distBottom);
-
+      const dL = spawnX, dR = width-spawnX, dT = spawnY, dB = height-spawnY;
+      const minD = Math.min(dL, dR, dT, dB);
       let ax = spawnX, ay = spawnY, rot = 0;
-      if      (minDist === distTop)    { ax = spawnX; ay = 20;        rot = 0; }
-      else if (minDist === distBottom) { ax = spawnX; ay = height-20; rot = Math.PI; }
-      else if (minDist === distLeft)   { ax = 20;     ay = spawnY;    rot = -Math.PI/2; }
-      else                             { ax = width-20; ay = spawnY;  rot = Math.PI/2; }
-
-      const arrow = this.add.image(ax, ay, 'spawn_arrow')
-        .setRotation(rot).setDepth(80).setAlpha(0.9);
+      if      (minD === dT) { ax = spawnX;   ay = 20;        rot = 0; }
+      else if (minD === dB) { ax = spawnX;   ay = height-20; rot = Math.PI; }
+      else if (minD === dL) { ax = 20;       ay = spawnY;    rot = -Math.PI/2; }
+      else                  { ax = width-20; ay = spawnY;    rot = Math.PI/2; }
+      const arrow = this.add.image(ax, ay, 'spawn_arrow').setRotation(rot).setDepth(80).setAlpha(0.9);
       this.tweens.add({ targets: arrow, alpha: 0, delay: 1200, duration: 300, onComplete: () => arrow.destroy() });
     }
 
-    // ── TIMER TICK ────────────────────────────────────────────────────────────
+    // ── TIMER ─────────────────────────────────────────────────────────────────
     _tickTimer() {
+      if (!this._introComplete) return;
       this._timeLeft--;
       if (this._timeLeft <= 0) this._endGame(false);
     }
@@ -1262,46 +1330,39 @@
     // ── HUD ───────────────────────────────────────────────────────────────────
     _buildHUD() {
       const { width } = this.scale;
-
-      // Panel background (top bar)
       this._hudBg = this.add.graphics().setDepth(88);
       this._hudBg.fillStyle(0x000022, 0.78);
       this._hudBg.fillRect(0, 0, width, 46);
       this._hudBg.lineStyle(1, 0x223366, 1);
       this._hudBg.strokeRect(0, 0, width, 46);
 
-      // Score label
       this._scoreTxt = this.add.text(12, 8, 'SCORE  0', {
         font: 'bold 18px "Courier New"', fill: '#66eeff'
       }).setDepth(89);
 
-      // Level label
       this._levelTxt = this.add.text(width/2, 8, `LEVEL ${this._level}`, {
         font: 'bold 18px "Courier New"', fill: '#aaddff'
       }).setDepth(89).setOrigin(0.5, 0);
 
-      // Debris counter
       this._debrisTxt = this.add.text(width/2, 26, `0 / ${this._cfg.debris}`, {
         font: '13px "Courier New"', fill: '#88ccee'
       }).setDepth(89).setOrigin(0.5, 0);
 
-      // Timer
       this._timerTxt = this.add.text(width - 12, 8, `${this._timeLeft}s`, {
         font: 'bold 20px "Courier New"', fill: '#ccffcc'
       }).setDepth(89).setOrigin(1, 0);
 
-      // Hearts (drawn as images, left of timer area)
       this._heartImgs = [];
       for (let i = 0; i < 3; i++) {
         const h = this.add.image(width - 114 + i * 26, 27, 'heart').setDepth(89).setScale(1.0);
         this._heartImgs.push(h);
       }
 
-      // Power-up active timer display — shown below HUD bar, centred
-      this._powerupLineTxt = this.add.text(width / 2, 54, '', {
+      // Power-up active timer line below HUD bar
+      this._powerupLineTxt = this.add.text(width/2, 54, '', {
         font: 'bold 14px "Courier New"', fill: '#ffffff',
         stroke: '#000000', strokeThickness: 3,
-        backgroundColor: '#00000099', padding: { x: 8, y: 3 }
+        backgroundColor: '#00000099', padding: { x:8, y:3 }
       }).setDepth(90).setOrigin(0.5, 0).setAlpha(0);
     }
 
@@ -1309,80 +1370,67 @@
       this._scoreTxt.setText(`SCORE  ${this._score}`);
       this._debrisTxt.setText(`${this._collected} / ${this._cfg.debris} debris`);
 
-      // Timer coloring
       let timerColor = '#ccffcc';
       if (this._timeLeft <= 10) {
         timerColor = '#ff2222';
         this._timerTxt.setAlpha(0.6 + 0.4 * Math.sin(time * 0.01));
       } else if (this._timeLeft <= 20) {
-        timerColor = '#ffaa00';
-        this._timerTxt.setAlpha(1);
-      } else {
-        this._timerTxt.setAlpha(1);
-      }
+        timerColor = '#ffaa00'; this._timerTxt.setAlpha(1);
+      } else { this._timerTxt.setAlpha(1); }
       this._timerTxt.setText(`${this._timeLeft}s`).setStyle({ fill: timerColor });
 
-      // Hearts — show/hide based on current health
       this._heartImgs.forEach((h, i) => h.setVisible(i < this._health));
 
-      // Power-up active timer line below HUD bar (stacked if both active)
+      // Active power-up countdown below HUD
       const lines = [];
-      if (this._shieldActive)  lines.push({ text: `SHIELD  ${Math.ceil(this._shieldTimer)}s`,  color: '#44ccff' });
-      if (this._vacuumActive)  lines.push({ text: `SUPER VACUUM  ${Math.ceil(this._vacuumTimer)}s`, color: '#ffdd00' });
-
+      if (this._shieldActive) lines.push({ text: `SHIELD  ${Math.ceil(this._shieldTimer)}s`,        color: '#44ccff' });
+      if (this._vacuumActive) lines.push({ text: `SUPER VACUUM  ${Math.ceil(this._vacuumTimer)}s`, color: '#ffdd00' });
       if (lines.length > 0) {
-        // Show first active (or both stacked via newline)
-        const combined = lines.map(l => l.text).join('   ');
         const col = lines.length > 1 ? '#ffffff' : lines[0].color;
-        this._powerupLineTxt.setText(combined).setStyle({ fill: col }).setAlpha(1);
-      } else {
-        this._powerupLineTxt.setAlpha(0);
-      }
+        this._powerupLineTxt.setText(lines.map(l => l.text).join('   ')).setStyle({ fill: col }).setAlpha(1);
+      } else { this._powerupLineTxt.setAlpha(0); }
     }
 
     // ── PAUSE / RESUME ────────────────────────────────────────────────────────
     _pause() {
       this._paused = true;
-      this._gameTimer.paused = true;
+      if (this._gameTimer) this._gameTimer.paused = true;
       this.physics.pause();
       this._pauseOverlay.setVisible(true);
     }
     _resume() {
       this._paused = false;
-      this._gameTimer.paused = false;
+      if (this._gameTimer) this._gameTimer.paused = false;
       this.physics.resume();
       this._pauseOverlay.setVisible(false);
     }
 
     // ── END GAME ──────────────────────────────────────────────────────────────
     _endGame(won) {
-      if (this._gameEnded) return;   // prevent double-trigger
+      if (this._gameEnded) return;
       this._gameEnded = true;
-
-      this._gameTimer.remove();
+      if (this._gameTimer) this._gameTimer.remove();
       this.physics.pause();
+
+      // Save to leaderboard and flag whether it's a new top-5 entry
+      const isNewEntry = lbInsert(this._score, this._level);
+      this.game.registry.set('isNewHighScore', isNewEntry);
 
       if (won) {
         AM.playLevelCompleteSound();
-        // Persist score and health for next level
-        this.game.registry.set('score',  this._score);
+        this.game.registry.set('score', this._score);
         this.game.registry.set('health', this._health);
         this.time.delayedCall(700, () => {
           if (this._level >= TOTAL_LEVELS) {
-            // All five levels cleared — show victory screen
             this.scene.start('GameOverScene', { missionComplete: true, score: this._score });
           } else {
-            this.scene.start('LevelCompleteScene', {
-              level: this._level, score: this._score, timeLeft: this._timeLeft
-            });
+            this.scene.start('LevelCompleteScene', { level: this._level, score: this._score, timeLeft: this._timeLeft });
           }
         });
       } else {
         AM.playGameOverSound();
         this.time.delayedCall(600, () => {
-          this.scene.start('GameOverScene', {
-            missionComplete: false, score: this._score, level: this._level
-          });
+          this.scene.start('GameOverScene', { missionComplete: false, score: this._score, level: this._level });
         });
       }
     }
@@ -1394,11 +1442,7 @@
   class LevelCompleteScene extends Phaser.Scene {
     constructor() { super({ key: 'LevelCompleteScene' }); }
 
-    init(data) {
-      this._level    = data.level;
-      this._score    = data.score;
-      this._timeLeft = data.timeLeft || 0;
-    }
+    init(data) { this._level = data.level; this._score = data.score; this._timeLeft = data.timeLeft || 0; }
 
     create() {
       this.game.registry.set('bgColor', 0x000011);
@@ -1406,17 +1450,15 @@
       buildTextures(this);
       AM.playMenuMusic();
 
-      const { width, height } = this.scale;
-      const isLastLevel = (this._level >= TOTAL_LEVELS);
+      const { width } = this.scale;
+      const isLastLevel = this._level >= TOTAL_LEVELS;
       const timeBonus   = this._timeLeft * 5;
       const totalScore  = this._score + timeBonus;
       const nextLevel   = this._level + 1;
       const nextCfg     = isLastLevel ? null : LEVELS[nextLevel - 1];
 
-      // ── Slide-in container — starts above screen, tweens to y=0 ─────────
       const container = this.add.container(0, -300);
 
-      // Panel background
       const panelGfx = this.add.graphics();
       panelGfx.fillStyle(0x001133, 0.90);
       panelGfx.fillRoundedRect(width/2 - 270, 80, 540, 440, 14);
@@ -1426,82 +1468,48 @@
 
       const addText = (x, y, txt, style) => {
         const t = this.add.text(x, y, txt, style).setOrigin(0.5);
-        container.add(t);
-        return t;
+        container.add(t); return t;
       };
 
       addText(width/2, 118, `LEVEL ${this._level} COMPLETE!`, {
-        font: 'bold 38px "Courier New"', fill: isLastLevel ? '#ffdd44' : '#66ff88',
+        font:'bold 38px "Courier New"', fill: isLastLevel ? '#ffdd44' : '#66ff88',
         stroke: isLastLevel ? '#664400' : '#004422', strokeThickness: 5,
-        shadow: { color: isLastLevel ? '#ffaa00' : '#00ff88', blur: 20, fill: true }
+        shadow: { color: isLastLevel ? '#ffaa00' : '#00ff88', blur:20, fill:true }
       });
+      addText(width/2, 185, 'Score this level:', { font:'17px "Courier New"', fill:'#aaddff' });
+      addText(width/2, 213, `${this._score}`, { font:'bold 34px "Courier New"', fill:'#ffdd44', stroke:'#664400', strokeThickness:4 });
+      addText(width/2, 260, `Time Bonus: ${this._timeLeft}s \u00d7 5 = +${timeBonus} pts`, { font:'17px "Courier New"', fill:'#66ff88' });
+      addText(width/2, 292, `Total Score: ${totalScore}`, { font:'bold 26px "Courier New"', fill:'#ffee66', stroke:'#664400', strokeThickness:3 });
 
-      addText(width/2, 185, `Score this level:`, {
-        font: '17px "Courier New"', fill: '#aaddff'
-      });
-      addText(width/2, 213, `${this._score}`, {
-        font: 'bold 34px "Courier New"', fill: '#ffdd44',
-        stroke: '#664400', strokeThickness: 4
-      });
-
-      // Time Bonus calculation line
-      addText(width/2, 260,
-        `Time Bonus: ${this._timeLeft}s \u00d7 5 = +${timeBonus} pts`,
-        { font: '17px "Courier New"', fill: '#66ff88' }
-      );
-
-      // Total score
-      addText(width/2, 292, `Total Score: ${totalScore}`, {
-        font: 'bold 26px "Courier New"', fill: '#ffee66',
-        stroke: '#664400', strokeThickness: 3
-      });
-
-      // Next level preview (only if not last level)
       if (!isLastLevel) {
-        addText(width/2, 340, `Next up \u2014 Level ${nextLevel}`, {
-          font: '16px "Courier New"', fill: '#88aacc'
-        });
-        addText(width/2, 366,
-          `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`,
-          { font: '18px "Courier New"', fill: '#aabbdd' }
-        );
+        addText(width/2, 340, `Next up \u2014 Level ${nextLevel}`, { font:'16px "Courier New"', fill:'#88aacc' });
+        addText(width/2, 366, `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`, { font:'18px "Courier New"', fill:'#aabbdd' });
       } else {
-        addText(width/2, 348, 'ALL 5 LEVELS CLEARED!', {
-          font: 'bold 22px "Courier New"', fill: '#ffcc00',
-          stroke: '#664400', strokeThickness: 3
-        });
-        addText(width/2, 378, 'Earth\'s orbit is spotless.', {
-          font: '16px "Courier New"', fill: '#aaffcc'
-        });
+        addText(width/2, 348, 'ALL 5 LEVELS CLEARED!', { font:'bold 22px "Courier New"', fill:'#ffcc00', stroke:'#664400', strokeThickness:3 });
+        addText(width/2, 378, 'Earth\'s orbit is spotless.', { font:'16px "Courier New"', fill:'#aaffcc' });
       }
 
-      // Action button — "[ NEXT LEVEL ]" or "[ MISSION COMPLETE ]"
       const btnLabel = isLastLevel ? '[ MISSION COMPLETE ]' : '[ NEXT LEVEL ]';
       const btn = this.add.text(width/2, 432, btnLabel, {
-        font: 'bold 24px "Courier New"', fill: '#ffffff',
+        font:'bold 24px "Courier New"', fill:'#ffffff',
         backgroundColor: isLastLevel ? '#443300' : '#004400',
-        padding: { x:20, y:12 },
-        stroke: isLastLevel ? '#ffaa00' : '#00cc44', strokeThickness: 3
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        padding:{x:20,y:12}, stroke: isLastLevel ? '#ffaa00' : '#00cc44', strokeThickness:3
+      }).setOrigin(0.5).setInteractive({ useHandCursor:true });
       container.add(btn);
       btn.on('pointerover', () => btn.setStyle({ backgroundColor: isLastLevel ? '#665500' : '#006600' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: isLastLevel ? '#443300' : '#004400' }));
       btn.on('pointerdown', () => {
         if (isLastLevel) {
-          // All levels done — go to victory GameOverScene
-          this.scene.start('GameOverScene', { missionComplete: true, score: totalScore });
+          this.scene.start('GameOverScene', { missionComplete:true, score:totalScore });
         } else {
           this.game.registry.set('currentLevel', nextLevel);
           this.game.registry.set('score', totalScore);
-          AM.stopMusic();
-          AM.playGameMusic();
+          AM.stopMusic(); AM.playGameMusic();
           this.scene.start('GameScene');
         }
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1 });
-
-      // Slide panel in from top over 0.4 s
-      this.tweens.add({ targets: container, y: 0, duration: 400, ease: 'Power2.easeOut' });
+      this.tweens.add({ targets: container, y:0, duration:400, ease:'Power2.easeOut' });
     }
   }
 
@@ -1521,70 +1529,91 @@
       this.game.registry.set('bgColor', 0x000011);
       buildStarfield(this, false);
       buildTextures(this);
-
-      const { width, height } = this.scale;
       AM.playMenuMusic();
 
-      // Panel
+      const { width } = this.scale;
+
       const panel = this.add.graphics();
       panel.fillStyle(0x110011, 0.88);
-      panel.fillRoundedRect(width/2 - 280, 90, 560, 400, 14);
+      panel.fillRoundedRect(width/2 - 280, 70, 560, 440, 14);
       panel.lineStyle(2, this._missionComplete ? 0x33cc66 : 0xcc3333, 1);
-      panel.strokeRoundedRect(width/2 - 280, 90, 560, 400, 14);
+      panel.strokeRoundedRect(width/2 - 280, 70, 560, 440, 14);
 
       if (this._missionComplete) {
-        this.add.text(width/2, 130, 'MISSION COMPLETE', {
-          font: 'bold 40px "Courier New"', fill: '#66ff88',
-          stroke: '#003322', strokeThickness: 6,
-          shadow: { color: '#00ff88', blur: 28, fill: true }
+        this.add.text(width/2, 112, 'MISSION COMPLETE', {
+          font:'bold 38px "Courier New"', fill:'#66ff88',
+          stroke:'#003322', strokeThickness:6, shadow:{color:'#00ff88',blur:28,fill:true}
         }).setOrigin(0.5);
-        this.add.text(width/2, 188, 'Earth\'s orbit is spotless.\nThe VIP cruiser docks safely.', {
-          font: '17px "Courier New"', fill: '#aaffcc', align: 'center', lineSpacing: 5
+        this.add.text(width/2, 166, 'Earth\'s orbit is spotless.\nThe VIP cruiser docks safely.', {
+          font:'16px "Courier New"', fill:'#aaffcc', align:'center', lineSpacing:5
         }).setOrigin(0.5);
       } else {
-        this.add.text(width/2, 130, 'MISSION FAILED', {
-          font: 'bold 42px "Courier New"', fill: '#ff4444',
-          stroke: '#330000', strokeThickness: 6,
-          shadow: { color: '#ff0000', blur: 28, fill: true }
+        this.add.text(width/2, 112, 'MISSION FAILED', {
+          font:'bold 40px "Courier New"', fill:'#ff4444',
+          stroke:'#330000', strokeThickness:6, shadow:{color:'#ff0000',blur:28,fill:true}
         }).setOrigin(0.5);
-        this.add.text(width/2, 188, `Failed at Level ${this._level}\nOrbit still full of junk!`, {
-          font: '17px "Courier New"', fill: '#ffaaaa', align: 'center', lineSpacing: 5
+        this.add.text(width/2, 166, `Failed at Level ${this._level}\nOrbit still full of junk!`, {
+          font:'16px "Courier New"', fill:'#ffaaaa', align:'center', lineSpacing:5
         }).setOrigin(0.5);
       }
 
-      // Score
-      this.add.text(width/2, 252, 'TOTAL SCORE', {
-        font: '16px "Courier New"', fill: '#aabbcc'
-      }).setOrigin(0.5);
-      this.add.text(width/2, 286, `${this._score}`, {
-        font: 'bold 46px "Courier New"', fill: '#ffdd44',
-        stroke: '#664400', strokeThickness: 4
+      this.add.text(width/2, 224, 'TOTAL SCORE', { font:'16px "Courier New"', fill:'#aabbcc' }).setOrigin(0.5);
+      this.add.text(width/2, 258, `${this._score}`, {
+        font:'bold 44px "Courier New"', fill:'#ffdd44', stroke:'#664400', strokeThickness:4
       }).setOrigin(0.5);
 
       // Stars rating
       const stars = this._score >= 300 ? '★★★' : this._score >= 150 ? '★★☆' : '★☆☆';
-      this.add.text(width/2, 342, stars, {
-        font: '40px "Courier New"', fill: '#ffcc00'
-      }).setOrigin(0.5);
+      this.add.text(width/2, 316, stars, { font:'36px "Courier New"', fill:'#ffcc00' }).setOrigin(0.5);
+
+      // High score notice
+      const isNew   = this.game.registry.get('isNewHighScore');
+      const best    = lbBest();
+      if (isNew) {
+        const newHSTxt = this.add.text(width/2, 358, 'NEW HIGH SCORE!', {
+          font:'bold 18px "Courier New"', fill:'#ffd700',
+          stroke:'#664400', strokeThickness:3
+        }).setOrigin(0.5);
+        // Flashing tween
+        this.tweens.add({ targets: newHSTxt, alpha: 0.2, duration: 500, yoyo:true, repeat:-1 });
+      } else if (best > 0) {
+        this.add.text(width/2, 358, `Your best: ${best}`, {
+          font:'14px "Courier New"', fill:'#8899aa'
+        }).setOrigin(0.5);
+      }
 
       // Restart button
-      const label = this._missionComplete ? '[ PLAY AGAIN ]' : '[ RESTART FROM LEVEL 1 ]';
-      const btn = this.add.text(width/2, 418, label, {
-        font: 'bold 22px "Courier New"', fill: '#ffffff',
-        backgroundColor: '#220033', padding: { x:18, y:11 },
-        stroke: '#6633cc', strokeThickness: 3
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#440066' }));
-      btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#220033' }));
+      const btnLabel = this._missionComplete ? '[ PLAY AGAIN ]' : '[ RESTART FROM LEVEL 1 ]';
+      const btn = this.add.text(width/2, 400, btnLabel, {
+        font:'bold 21px "Courier New"', fill:'#ffffff',
+        backgroundColor:'#220033', padding:{x:18,y:11},
+        stroke:'#6633cc', strokeThickness:3
+      }).setOrigin(0.5).setInteractive({ useHandCursor:true });
+      btn.on('pointerover', () => btn.setStyle({ backgroundColor:'#440066' }));
+      btn.on('pointerout',  () => btn.setStyle({ backgroundColor:'#220033' }));
       btn.on('pointerdown', () => {
-        // Always return to MenuScene on restart — never jump directly to GameScene
         this.game.registry.set('currentLevel', 1);
         this.game.registry.set('score', 0);
         this.game.registry.set('health', 3);
+        this.game.registry.set('isNewHighScore', false);
         AM.stopMusic();
         this.scene.start('MenuScene');
       });
       this.tweens.add({ targets: btn, scaleX:1.04, scaleY:1.04, duration:900, yoyo:true, repeat:-1 });
+
+      // Main menu button
+      const menuBtn = this.add.text(width/2, 452, '[ MAIN MENU ]', {
+        font:'16px "Courier New"', fill:'#8899cc', padding:{x:10,y:6}
+      }).setOrigin(0.5).setInteractive({ useHandCursor:true });
+      menuBtn.on('pointerover', () => menuBtn.setStyle({ fill:'#aabbff' }));
+      menuBtn.on('pointerout',  () => menuBtn.setStyle({ fill:'#8899cc' }));
+      menuBtn.on('pointerdown', () => {
+        this.game.registry.set('currentLevel', 1);
+        this.game.registry.set('score', 0);
+        this.game.registry.set('health', 3);
+        this.game.registry.set('isNewHighScore', false);
+        this.scene.start('MenuScene');
+      });
     }
   }
 
