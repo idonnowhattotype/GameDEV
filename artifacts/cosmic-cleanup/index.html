@@ -189,6 +189,45 @@
       [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.15, 'sine', 0.3, i * 0.15));
     }
 
+    /**
+     * Rocket boost sound for Super Vacuum pickup:
+     * white-noise burst through a 800 Hz lowpass filter,
+     * gain: 0→0.6 over 0.15 s (ignition), hold 0.4 s, fade to 0 over 1 s.
+     */
+    playRocketBoostSound() {
+      try {
+        const ctx    = this._getCtx();
+        const rate   = ctx.sampleRate;
+        const bufLen = rate * 2; // 2-second buffer
+        const buf    = ctx.createBuffer(1, bufLen, rate);
+        const data   = buf.getChannelData(0);
+        for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+
+        const src    = ctx.createBufferSource();
+        src.buffer   = buf;
+        src.loop     = false;
+
+        const filter       = ctx.createBiquadFilter();
+        filter.type        = 'lowpass';
+        filter.frequency.value = 800;
+        filter.Q.value     = 0.5;
+
+        const gain = ctx.createGain();
+        const t    = ctx.currentTime;
+        gain.gain.setValueAtTime(0,    t);
+        gain.gain.linearRampToValueAtTime(0.6, t + 0.15);  // ignition burst
+        gain.gain.setValueAtTime(0.6,  t + 0.55);           // hold
+        gain.gain.linearRampToValueAtTime(0.15, t + 1.55); // sustained fade
+        gain.gain.linearRampToValueAtTime(0.0,  t + 1.6);  // silent
+
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(t);
+        src.stop(t + 1.6);
+      } catch(e) {}
+    }
+
     /** Low descending tone on game over. */
     playGameOverSound() {
       try {
@@ -212,52 +251,52 @@
   // TEXTURE FACTORY — all graphics drawn programmatically, no external files
   // ═══════════════════════════════════════════════════════════════════════════
   function buildTextures(scene) {
-    // ── Player Ship (64 × 80) ─────────────────────────────────────────────────
+    // ── Player Ship (42 × 46) — all dims scaled 0.6× from original ──────────
     // Rocket-style: tall fuselage, swept wings, cockpit window, engine nozzle
     if (!scene.textures.exists('ship')) {
       const g = scene.add.graphics();
-      const cx = 32;
+      const cx = 21;
       // Main fuselage (light grey, pointed at top)
       g.fillStyle(0xdde8f0, 1);
       g.fillPoints([
-        {x:cx,   y:2},  {x:cx+14,y:48}, {x:cx+9, y:60},
-        {x:cx-9, y:60}, {x:cx-14,y:48}
+        {x:cx,   y:1},  {x:cx+8, y:29}, {x:cx+5, y:36},
+        {x:cx-5, y:36}, {x:cx-8, y:29}
       ], true);
       // Highlight stripe (left side lighter)
       g.fillStyle(0xffffff, 0.3);
       g.fillPoints([
-        {x:cx,   y:2}, {x:cx,   y:58}, {x:cx-9, y:60}, {x:cx-14,y:48}
+        {x:cx,   y:1}, {x:cx,   y:35}, {x:cx-5, y:36}, {x:cx-8, y:29}
       ], true);
       // Left swept wing
       g.fillStyle(0x8899bb, 1);
       g.fillPoints([
-        {x:cx-9, y:36}, {x:cx-34,y:66}, {x:cx-26,y:68}, {x:cx-14,y:52}
+        {x:cx-5, y:22}, {x:cx-20,y:40}, {x:cx-16,y:41}, {x:cx-8, y:31}
       ], true);
       // Right swept wing
       g.fillPoints([
-        {x:cx+9, y:36}, {x:cx+34,y:66}, {x:cx+26,y:68}, {x:cx+14,y:52}
+        {x:cx+5, y:22}, {x:cx+20,y:40}, {x:cx+16,y:41}, {x:cx+8, y:31}
       ], true);
       // Wing accent lines
       g.lineStyle(1, 0xaabbdd, 0.9);
-      g.beginPath(); g.moveTo(cx-9, 38); g.lineTo(cx-30, 62); g.strokePath();
-      g.beginPath(); g.moveTo(cx+9, 38); g.lineTo(cx+30, 62); g.strokePath();
+      g.beginPath(); g.moveTo(cx-5, 23); g.lineTo(cx-18, 37); g.strokePath();
+      g.beginPath(); g.moveTo(cx+5, 23); g.lineTo(cx+18, 37); g.strokePath();
       // Engine nozzle
       g.fillStyle(0x445566, 1);
-      g.fillRect(cx-8, 58, 16, 10);
+      g.fillRect(cx-5, 35, 10, 6);
       // Nozzle opening glow
       g.fillStyle(0xff6600, 0.5);
-      g.fillEllipse(cx, 68, 14, 7);
+      g.fillEllipse(cx, 41, 8, 4);
       // Cockpit window (cyan, near top of fuselage)
       g.fillStyle(0x00bbee, 0.95);
-      g.fillEllipse(cx, 18, 14, 18);
+      g.fillEllipse(cx, 11, 8, 11);
       // Cockpit reflection
       g.fillStyle(0xaaeeff, 0.6);
-      g.fillEllipse(cx-3, 14, 5, 7);
+      g.fillEllipse(cx-2, 8, 3, 4);
       // Hull panel lines
       g.lineStyle(1, 0x99aacc, 0.5);
-      g.beginPath(); g.moveTo(cx-6, 28); g.lineTo(cx+6, 28); g.strokePath();
-      g.beginPath(); g.moveTo(cx-8, 40); g.lineTo(cx+8, 40); g.strokePath();
-      g.generateTexture('ship', 68, 76);
+      g.beginPath(); g.moveTo(cx-4, 17); g.lineTo(cx+4, 17); g.strokePath();
+      g.beginPath(); g.moveTo(cx-5, 24); g.lineTo(cx+5, 24); g.strokePath();
+      g.generateTexture('ship', 42, 46);
       g.destroy();
     }
 
@@ -605,6 +644,8 @@
         .setCollideWorldBounds(true)
         .setDrag(130)
         .setMaxVelocity(290);
+      // Physics hitbox matched to the 42×46 texture (0.6× scaled ship)
+      this._player.setSize(34, 40);
 
       // ── Thruster particle emitter ──────────────────────────────────────────
       this._thruster = this.add.particles(0, 0, 'particle', {
@@ -793,10 +834,10 @@
         this._player.setRotation(
           Phaser.Math.Angle.RotateTo(this._player.rotation, targetRot, 0.13)
         );
-        // Thruster particles
+        // Thruster particles — offset scaled to match new ship size
         this._thruster.setPosition(
-          this._player.x + Math.cos(this._player.rotation + Math.PI) * 14,
-          this._player.y + Math.sin(this._player.rotation + Math.PI) * 14
+          this._player.x + Math.cos(this._player.rotation + Math.PI) * 8,
+          this._player.y + Math.sin(this._player.rotation + Math.PI) * 8
         );
         this._thruster.explode(3);
       } else {
@@ -814,13 +855,13 @@
       const px = this._player.x;
       const py = this._player.y;
       const rot = this._player.rotation;
-      // Nozzle offset: bottom of ship (in local space ~30px down)
-      const nozzleX = px + Math.sin(rot) * 30;
-      const nozzleY = py - Math.cos(rot) * 30;
+      // Nozzle offset: bottom of ship — scaled 0.6× (30→18)
+      const nozzleX = px + Math.sin(rot) * 18;
+      const nozzleY = py - Math.cos(rot) * 18;
       // Flame direction is opposite to ship facing
       const flameDir = rot + Math.PI;
-      const flameLen = 18 + Math.sin(this._flameTick * 0.5) * 6;
-      const sideOff  = 6;
+      const flameLen = 11 + Math.sin(this._flameTick * 0.5) * 4;
+      const sideOff  = 4;
 
       // Alternate orange/yellow each frame tick
       const innerColor = (this._flameTick % 2 === 0) ? 0xffee00 : 0xff8800;
@@ -831,7 +872,7 @@
       this._fxGfx.fillTriangle(
         nozzleX + Math.cos(rot) * sideOff, nozzleY + Math.sin(rot) * sideOff,
         nozzleX - Math.cos(rot) * sideOff, nozzleY - Math.sin(rot) * sideOff,
-        nozzleX + Math.cos(flameDir) * (flameLen+6), nozzleY + Math.sin(flameDir) * (flameLen+6)
+        nozzleX + Math.cos(flameDir) * (flameLen+4), nozzleY + Math.sin(flameDir) * (flameLen+4)
       );
       // Inner flame (brighter)
       this._fxGfx.fillStyle(innerColor, 0.85);
@@ -1065,14 +1106,15 @@
       const type = powerup.texture.key;
       powerup.destroy();
       this._powerupBobData = this._powerupBobData.filter(d => d.sprite.active);
-      AM.playPowerUpSound();
 
       if (type === 'powerup_shield') {
+        AM.playPowerUpSound(); // rising arpeggio (unchanged)
         this._shieldActive = true;
         this._shieldTimer  = 8;
         player.setTint(0x44aaff);
         this._showStatusPop('SHIELD ON  8s', 0x44aaff);
       } else {
+        AM.playRocketBoostSound(); // white-noise rocket boost (replaces arpeggio)
         this._vacuumActive = true;
         this._vacuumTimer  = 10;
         player.setTint(0xffcc00);
