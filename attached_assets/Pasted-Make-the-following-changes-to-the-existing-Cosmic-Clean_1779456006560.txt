@@ -1,0 +1,63 @@
+Make the following changes to the existing Cosmic Cleanup Phaser 3 game. Do not break any existing mechanics.
+
+1. Redesign the player ship to match a pixel-art arcade fighter style
+Redraw the player ship entirely using the Phaser Graphics API to match this description precisely:
+
+Body: A narrow, vertically-oriented fuselage. Draw it as a tall pentagon — pointed at the top, flat at the bottom, slightly wider in the middle. Fill with a dark steel blue (#4a6fa5) with a lighter highlight stripe (#8ab4f8) running down the centre to simulate a metallic ridge.
+Wings: Two swept-back delta wings extending from the lower half of the body. Each wing is a triangle pointing backward and outward. Fill with mid-grey (#778899). Add a thin darker border (#334455) around each wing.
+Cockpit: A small elongated oval near the top of the fuselage, filled with bright cyan (#00ffff) with a white glint dot (3px circle) in the upper-left of the oval.
+Engine block: A flat rectangular section at the very bottom of the fuselage, filled dark grey (#222). Two small circular engine ports side by side at the bottom of this block, filled black with a dim orange inner glow (#ff6600 at low alpha).
+Idle exhaust: Even when stationary, draw a very short, faint orange flicker (height 6px, alpha 0.4) from each engine port. Alternate the height between 5px and 7px each frame to simulate idle burn.
+Thrust exhaust (movement keys held): When any movement key is pressed, draw a proper flame plume from each engine port. The flame is a pointed teardrop shape. Use a vertical gradient effect by drawing three overlapping ellipses: the base ellipse (closest to engine) filled solid orange (#ff6600), a mid ellipse slightly smaller and taller filled yellow-orange (#ffaa00), and the tip ellipse smallest and tallest filled bright yellow (#ffff00). The full flame height when thrusting is 28px.
+Boost exhaust (Super Vacuum active): When the Super Vacuum power-up is active, extend the flame to 48px height. Add a fourth ellipse at the tip filled electric blue (#00aaff) — so the gradient goes orange at base → yellow-orange → yellow → blue at tip. Also increase the width of all flame ellipses by 30%.
+All flame drawing happens after the ship body so it appears behind the ship visually (draw flames first, then ship body on top).
+Scale the entire ship so the fuselage height is 38px and total width including wings is 34px.
+
+
+2. Fix screen boundary / wrap behaviour
+The player ship currently exits the screen and disappears off the left and right edges. Fix this:
+
+Use Phaser.Math.Wrap or manual boundary checks in the player update loop.
+Wrap the ship position: if the ship exits the right edge, it reappears on the left, and vice versa. Same for top and bottom.
+Apply the same wrap logic to all debris objects and rogue satellites so nothing permanently exits the play area.
+
+
+3. Reduce enemy size
+The rogue satellite sprites are too large and dominate the screen. Reduce the drawn radius of the central body and all spike protrusions by 35%. Update the physics body size to match. Their behaviour and speed must not change.
+
+4. Fix the shield power-up icon
+The current chevron/arrow icon is confusing. Replace it with a drawn shield shape: a symmetrical kite/shield outline (flat top, curved sides tapering to a point at the bottom) drawn in white inside the blue hexagon. The shield outline should be 2px stroke, no fill. Remove the rotation animation from the icon — instead, keep the bobbing up-and-down sine wave motion only.
+
+5. Proximity warning system
+When a rogue satellite is within 180px of the player, display a pulsing red danger ring around the player ship — a circle outline (no fill, red stroke, radius 55px, alpha oscillating between 0.2 and 0.8 using a sine wave on game time). When the satellite moves beyond 180px, the ring disappears. This gives the player a clear heads-up before taking damage.
+
+6. Improve score pop-up text
+The "+20 x2!" floating text is hard to read. Make these changes:
+
+Increase font size from whatever it currently is to 20px bold.
+Add a black drop shadow (2px offset) behind the text.
+Spawn the pop-up directly above the collected debris position, not near the centre of the screen.
+The text floats upward 40px over 0.8 seconds then fades out. Use a Phaser tween for this.
+
+
+7. Anchor combo text to the ship
+The "x2 COMBO!" text currently appears in a fixed screen position. Change it so it appears directly above the player ship's current position at the moment the combo triggers, then floats upward and fades the same way as the score pop-up. Font size 24px, colour gold (#ffd700), black drop shadow.
+
+8. Improve the level complete screen
+
+Increase the font size of the next-level preview line ("18 debris • 55s • 3 enemies") from its current small size to 18px.
+Add a brief animated transition when the screen appears: the panel slides in from the top over 0.4 seconds using a Phaser tween (start y at -300, tween to centred position).
+Add a bonus display: calculate and show a "Time Bonus" — multiply remaining seconds by 5 and add it to the score at level complete. Show the calculation clearly: "Time Bonus: 12s × 5 = +60 pts" in green text before the total score.
+
+
+9. Boost sound — rocket engine
+When the Super Vacuum power-up is collected, replace any existing power-up sound with this procedural rocket boost sound using Web Audio API:
+
+Create a white noise BufferSource (2-second buffer, Math.random() * 2 - 1 per sample).
+Route through a BiquadFilterNode, type lowpass, frequency 800Hz, Q 0.5.
+Route through a GainNode: ramp from 0 to 0.6 over 0.15s, hold at 0.6 for 0.4s, ramp to 0.15 over 1s.
+Do not loop. Total duration ~1.5 seconds.
+The shield pickup keeps the existing arpeggio sound unchanged.
+
+
+Ensure no console errors after all changes. All five levels must still complete correctly. The ship flame must visibly animate every frame.

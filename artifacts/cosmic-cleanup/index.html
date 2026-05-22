@@ -251,51 +251,55 @@
   // TEXTURE FACTORY — all graphics drawn programmatically, no external files
   // ═══════════════════════════════════════════════════════════════════════════
   function buildTextures(scene) {
-    // ── Player Ship (42 × 46) — all dims scaled 0.6× from original ──────────
-    // Rocket-style: tall fuselage, swept wings, cockpit window, engine nozzle
+    // ── Player Ship (42 × 46) — pixel-art arcade fighter style ─────────────
+    // Fuselage: 38 px tall pentagon, steel blue. Wings: delta swept-back.
+    // Cockpit: cyan oval. Engine block: dark grey with two ports.
     if (!scene.textures.exists('ship')) {
       const g = scene.add.graphics();
       const cx = 21;
-      // Main fuselage (light grey, pointed at top)
-      g.fillStyle(0xdde8f0, 1);
+
+      // Delta wings (draw first, behind fuselage)
+      g.fillStyle(0x778899, 1);
+      g.fillPoints([{x:cx-8,y:20},{x:cx-17,y:42},{x:cx-8,y:42}], true); // left
+      g.fillPoints([{x:cx+8,y:20},{x:cx+17,y:42},{x:cx+8,y:42}], true); // right
+      g.lineStyle(1.5, 0x334455, 1);
+      g.strokePoints([{x:cx-8,y:20},{x:cx-17,y:42},{x:cx-8,y:42}], true);
+      g.strokePoints([{x:cx+8,y:20},{x:cx+17,y:42},{x:cx+8,y:42}], true);
+
+      // Main fuselage pentagon — pointed top, flat bottom, steel blue
+      g.fillStyle(0x4a6fa5, 1);
       g.fillPoints([
-        {x:cx,   y:1},  {x:cx+8, y:29}, {x:cx+5, y:36},
-        {x:cx-5, y:36}, {x:cx-8, y:29}
+        {x:cx,   y:4},  // top point
+        {x:cx+8, y:16}, // upper-right shoulder
+        {x:cx+7, y:42}, // lower-right
+        {x:cx-7, y:42}, // lower-left
+        {x:cx-8, y:16}  // upper-left shoulder
       ], true);
-      // Highlight stripe (left side lighter)
-      g.fillStyle(0xffffff, 0.3);
-      g.fillPoints([
-        {x:cx,   y:1}, {x:cx,   y:35}, {x:cx-5, y:36}, {x:cx-8, y:29}
-      ], true);
-      // Left swept wing
-      g.fillStyle(0x8899bb, 1);
-      g.fillPoints([
-        {x:cx-5, y:22}, {x:cx-20,y:40}, {x:cx-16,y:41}, {x:cx-8, y:31}
-      ], true);
-      // Right swept wing
-      g.fillPoints([
-        {x:cx+5, y:22}, {x:cx+20,y:40}, {x:cx+16,y:41}, {x:cx+8, y:31}
-      ], true);
-      // Wing accent lines
-      g.lineStyle(1, 0xaabbdd, 0.9);
-      g.beginPath(); g.moveTo(cx-5, 23); g.lineTo(cx-18, 37); g.strokePath();
-      g.beginPath(); g.moveTo(cx+5, 23); g.lineTo(cx+18, 37); g.strokePath();
-      // Engine nozzle
-      g.fillStyle(0x445566, 1);
-      g.fillRect(cx-5, 35, 10, 6);
-      // Nozzle opening glow
-      g.fillStyle(0xff6600, 0.5);
-      g.fillEllipse(cx, 41, 8, 4);
-      // Cockpit window (cyan, near top of fuselage)
-      g.fillStyle(0x00bbee, 0.95);
-      g.fillEllipse(cx, 11, 8, 11);
-      // Cockpit reflection
-      g.fillStyle(0xaaeeff, 0.6);
-      g.fillEllipse(cx-2, 8, 3, 4);
-      // Hull panel lines
-      g.lineStyle(1, 0x99aacc, 0.5);
-      g.beginPath(); g.moveTo(cx-4, 17); g.lineTo(cx+4, 17); g.strokePath();
-      g.beginPath(); g.moveTo(cx-5, 24); g.lineTo(cx+5, 24); g.strokePath();
+
+      // Highlight stripe down centre
+      g.fillStyle(0x8ab4f8, 0.75);
+      g.fillRect(cx-1, 5, 2, 36);
+
+      // Engine block at base of fuselage
+      g.fillStyle(0x222222, 1);
+      g.fillRect(cx-7, 40, 14, 6);
+
+      // Two circular engine ports
+      g.fillStyle(0x000000, 1);
+      g.fillCircle(cx-3, 44, 2.5);
+      g.fillCircle(cx+3, 44, 2.5);
+      // Dim orange inner glow
+      g.fillStyle(0xff6600, 0.35);
+      g.fillCircle(cx-3, 44, 1.5);
+      g.fillCircle(cx+3, 44, 1.5);
+
+      // Cockpit — elongated cyan oval near top of fuselage
+      g.fillStyle(0x00ffff, 0.95);
+      g.fillEllipse(cx, 15, 8, 13);
+      // White glint in upper-left of cockpit
+      g.fillStyle(0xffffff, 0.9);
+      g.fillCircle(cx-2, 11, 1.5);
+
       g.generateTexture('ship', 42, 46);
       g.destroy();
     }
@@ -341,17 +345,16 @@
       g.destroy();
     }
 
-    // ── Enemy Rogue Satellite (68 × 68) ──────────────────────────────────────
-    // Aggressive sea-mine shape: spiked body, antenna arms, danger core
+    // ── Enemy Rogue Satellite (46 × 46) — 35% smaller than original ─────────
     if (!scene.textures.exists('satellite')) {
       const g = scene.add.graphics();
-      const cx = 34, cy = 34, bodyR = 13;
-      // Spikes (10 irregular protrusions)
+      const cx = 23, cy = 23, bodyR = 8;
+      // Spikes (10 irregular protrusions) — radii reduced by 35%
       for (let i = 0; i < 10; i++) {
         const baseAng  = (i / 10) * Math.PI * 2;
         const angOff   = Math.sin(i * 1.7) * 0.18;
         const ang      = baseAng + angOff;
-        const tipR     = i % 3 === 0 ? 28 : i % 2 === 0 ? 23 : 18;
+        const tipR     = i % 3 === 0 ? 18 : i % 2 === 0 ? 15 : 12;
         const sideAng1 = ang - 0.22;
         const sideAng2 = ang + 0.22;
         g.fillStyle(0xbb0000, 1);
@@ -366,24 +369,22 @@
       g.fillCircle(cx, cy, bodyR);
       // Glowing inner core
       g.fillStyle(0xff2200, 0.9);
-      g.fillCircle(cx, cy, 7);
+      g.fillCircle(cx, cy, 4);
       g.fillStyle(0xff8888, 1);
-      g.fillCircle(cx - 2, cy - 2, 3); // highlight
+      g.fillCircle(cx - 1, cy - 1, 2);
       // Left antenna arm
       g.lineStyle(2, 0xaa1111, 1);
-      g.beginPath(); g.moveTo(cx - bodyR - 1, cy); g.lineTo(cx - 30, cy - 6); g.strokePath();
-      // Cracked left tip
+      g.beginPath(); g.moveTo(cx - bodyR - 1, cy); g.lineTo(cx - 20, cy - 4); g.strokePath();
       g.lineStyle(2, 0xff3333, 0.8);
-      g.beginPath(); g.moveTo(cx-30, cy-6); g.lineTo(cx-35, cy-2);  g.strokePath();
-      g.beginPath(); g.moveTo(cx-30, cy-6); g.lineTo(cx-33, cy-12); g.strokePath();
+      g.beginPath(); g.moveTo(cx-20, cy-4); g.lineTo(cx-23, cy-1);  g.strokePath();
+      g.beginPath(); g.moveTo(cx-20, cy-4); g.lineTo(cx-22, cy-8);  g.strokePath();
       // Right antenna arm
       g.lineStyle(2, 0xaa1111, 1);
-      g.beginPath(); g.moveTo(cx + bodyR + 1, cy); g.lineTo(cx + 30, cy + 6); g.strokePath();
-      // Cracked right tip
+      g.beginPath(); g.moveTo(cx + bodyR + 1, cy); g.lineTo(cx + 20, cy + 4); g.strokePath();
       g.lineStyle(2, 0xff3333, 0.8);
-      g.beginPath(); g.moveTo(cx+30, cy+6); g.lineTo(cx+35, cy+2);  g.strokePath();
-      g.beginPath(); g.moveTo(cx+30, cy+6); g.lineTo(cx+33, cy+12); g.strokePath();
-      g.generateTexture('satellite', 68, 68);
+      g.beginPath(); g.moveTo(cx+20, cy+4); g.lineTo(cx+23, cy+1);  g.strokePath();
+      g.beginPath(); g.moveTo(cx+20, cy+4); g.lineTo(cx+22, cy+8);  g.strokePath();
+      g.generateTexture('satellite', 46, 46);
       g.destroy();
     }
 
@@ -409,9 +410,19 @@
       g.fillStyle(0x44aaff, 0.3);
       const innerHex = hexPts.map(p => ({x: cx+(p.x-cx)*0.55, y: cy+(p.y-cy)*0.55}));
       g.fillPoints(innerHex, true);
-      // Shield chevron icon (two lines forming a V/chevron)
-      g.lineStyle(3.5, 0xffffff, 1);
-      g.beginPath(); g.moveTo(cx-9, cy-5); g.lineTo(cx, cy+8); g.lineTo(cx+9, cy-5); g.strokePath();
+      // Shield kite/heraldic outline — flat top, tapering sides, point at bottom
+      // Uses strokePoints (bezierCurveTo not available in Phaser path API)
+      g.lineStyle(2, 0xffffff, 1);
+      const shieldPts = [
+        { x: cx-9,  y: cy-8  }, // top-left
+        { x: cx+9,  y: cy-8  }, // top-right
+        { x: cx+11, y: cy+0  }, // right shoulder
+        { x: cx+7,  y: cy+6  }, // right lower
+        { x: cx,    y: cy+12 }, // bottom point
+        { x: cx-7,  y: cy+6  }, // left lower
+        { x: cx-11, y: cy+0  }, // left shoulder
+      ];
+      g.strokePoints(shieldPts, true);
       g.generateTexture('powerup_shield', 52, 52);
       g.destroy();
     }
@@ -641,10 +652,10 @@
       // ── Player ─────────────────────────────────────────────────────────────
       this._player = this.physics.add.image(width/2, height/2, 'ship')
         .setDepth(20)
-        .setCollideWorldBounds(true)
+        .setCollideWorldBounds(false)
         .setDrag(130)
         .setMaxVelocity(290);
-      // Physics hitbox matched to the 42×46 texture (0.6× scaled ship)
+      // Physics hitbox matched to the 42×46 texture
       this._player.setSize(34, 40);
 
       // ── Thruster particle emitter ──────────────────────────────────────────
@@ -662,7 +673,7 @@
         const y = Phaser.Math.Between(100, height - 60);
         const variant = i % 6;
         const piece = this._debrisGroup.create(x, y, `debris_${variant}`);
-        piece.setBounce(1).setCollideWorldBounds(true).setDepth(15);
+        piece.setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
         const spd = Phaser.Math.Between(18, 62);
         const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
         piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
@@ -780,6 +791,24 @@
       // Draw vacuum radius preview circle
       if (this._vacuumActive) this._drawVacuumCircle();
 
+      // ── Screen wrap for player, debris and satellites ──────────────────────
+      this.physics.world.wrap(this._player, 8);
+      this._debrisGroup.getChildren().forEach(d => this.physics.world.wrap(d, 22));
+      this._satGroup.getChildren().forEach(s => this.physics.world.wrap(s, 23));
+
+      // ── Proximity danger ring — pulsing red circle around player ──────────
+      const dangerClose = this._satExtras.some(ext => {
+        if (!ext.sprite.active) return false;
+        const dx = this._player.x - ext.sprite.x;
+        const dy = this._player.y - ext.sprite.y;
+        return Math.sqrt(dx*dx + dy*dy) < 180;
+      });
+      if (dangerClose) {
+        const wa = 0.2 + 0.6 * (0.5 + 0.5 * Math.sin(time * 0.006));
+        this._fxGfx.lineStyle(2, 0xff0000, wa);
+        this._fxGfx.strokeCircle(this._player.x, this._player.y, 55);
+      }
+
       // Shield FX
       if (this._shieldActive) {
         this._shieldFxGfx.lineStyle(3, 0x44aaff, 0.85);
@@ -848,39 +877,72 @@
       this._drawFlame(moving);
     }
 
-    /** Draw an animated flame plume from the engine nozzle when thrusting. */
+    /**
+     * Draw animated engine flames every frame.
+     * Idle: faint short flicker always visible.
+     * Thrust: three-ellipse teardrop plume (28 px).
+     * Boost (Super Vacuum active): four-ellipse plume with blue tip (48 px), 30% wider.
+     * Flames drawn on _fxGfx (depth 10) so they appear behind the ship (depth 20).
+     */
     _drawFlame(moving) {
-      if (!moving) return;
       this._flameTick++;
-      const px = this._player.x;
-      const py = this._player.y;
+      const px  = this._player.x;
+      const py  = this._player.y;
       const rot = this._player.rotation;
-      // Nozzle offset: bottom of ship — scaled 0.6× (30→18)
+      // Nozzle at engine end of ship (behind along facing direction)
       const nozzleX = px + Math.sin(rot) * 18;
       const nozzleY = py - Math.cos(rot) * 18;
-      // Flame direction is opposite to ship facing
       const flameDir = rot + Math.PI;
-      const flameLen = 11 + Math.sin(this._flameTick * 0.5) * 4;
-      const sideOff  = 4;
 
-      // Alternate orange/yellow each frame tick
-      const innerColor = (this._flameTick % 2 === 0) ? 0xffee00 : 0xff8800;
-      const outerColor = 0xff4400;
+      // Port offsets (two engine ports side by side)
+      const perpCos = Math.cos(rot), perpSin = Math.sin(rot);
+      const portOff = 3;
+      const ports = [
+        { x: nozzleX - perpCos * portOff, y: nozzleY - perpSin * portOff },
+        { x: nozzleX + perpCos * portOff, y: nozzleY + perpSin * portOff },
+      ];
 
-      // Outer flame (wider, more transparent)
-      this._fxGfx.fillStyle(outerColor, 0.45);
-      this._fxGfx.fillTriangle(
-        nozzleX + Math.cos(rot) * sideOff, nozzleY + Math.sin(rot) * sideOff,
-        nozzleX - Math.cos(rot) * sideOff, nozzleY - Math.sin(rot) * sideOff,
-        nozzleX + Math.cos(flameDir) * (flameLen+4), nozzleY + Math.sin(flameDir) * (flameLen+4)
-      );
-      // Inner flame (brighter)
-      this._fxGfx.fillStyle(innerColor, 0.85);
-      this._fxGfx.fillTriangle(
-        nozzleX + Math.cos(rot) * (sideOff*0.5), nozzleY + Math.sin(rot) * (sideOff*0.5),
-        nozzleX - Math.cos(rot) * (sideOff*0.5), nozzleY - Math.sin(rot) * (sideOff*0.5),
-        nozzleX + Math.cos(flameDir) * flameLen, nozzleY + Math.sin(flameDir) * flameLen
-      );
+      const isBoost = this._vacuumActive;
+
+      ports.forEach(port => {
+        if (moving) {
+          // Thrust or boost plume — three overlapping ellipses
+          const fh  = isBoost ? 48 : 28;
+          const wm  = isBoost ? 1.3 : 1.0;
+          // Base ellipse — orange, closest to engine
+          this._drawFlameEllipse(port.x, port.y, flameDir, 5 * wm, fh * 0.28, 0xff6600, 0.9);
+          // Mid ellipse — yellow-orange
+          this._drawFlameEllipse(port.x, port.y, flameDir, 3.5 * wm, fh * 0.60, 0xffaa00, 0.75);
+          // Tip ellipse — bright yellow
+          this._drawFlameEllipse(port.x, port.y, flameDir, 2.0 * wm, fh * 0.88, 0xffff00, 0.60);
+          if (isBoost) {
+            // Electric blue tip for boost
+            this._drawFlameEllipse(port.x, port.y, flameDir, 1.5, fh, 0x00aaff, 0.50);
+          }
+        } else {
+          // Idle exhaust — short faint orange flicker, alternates 5 ↔ 7 px each frame
+          const idleH = (this._flameTick % 2 === 0) ? 5 : 7;
+          this._drawFlameEllipse(port.x, port.y, flameDir, 2.5, idleH, 0xff6600, 0.40);
+        }
+      });
+    }
+
+    /** Draw a rotated ellipse extending from nozzle in flameDir on _fxGfx. */
+    _drawFlameEllipse(nozzleX, nozzleY, flameDir, rx, ry, color, alpha) {
+      const cosA = Math.cos(flameDir), sinA = Math.sin(flameDir);
+      // Offset centre so base of ellipse sits at the nozzle
+      const cx = nozzleX + cosA * (ry * 0.5);
+      const cy = nozzleY + sinA * (ry * 0.5);
+      const steps = 10;
+      const pts = [];
+      for (let i = 0; i < steps; i++) {
+        const t  = (i / steps) * Math.PI * 2;
+        const lx = Math.cos(t) * rx;   // perpendicular axis
+        const ly = Math.sin(t) * ry;   // flame axis
+        pts.push({ x: cx - sinA * lx + cosA * ly, y: cy + cosA * lx + sinA * ly });
+      }
+      this._fxGfx.fillStyle(color, alpha);
+      this._fxGfx.fillPoints(pts, true);
     }
 
     // ── SATELLITE AI + FX ─────────────────────────────────────────────────────
@@ -894,10 +956,12 @@
       const [sx, sy] = corners[index % corners.length];
       const sat = this._satGroup.create(sx, sy, 'satellite')
         .setBounce(0.55)
-        .setCollideWorldBounds(true)
+        .setCollideWorldBounds(false)
         .setMaxVelocity(this._cfg.enemySpeed * 1.3)
         .setAngularVelocity(Phaser.Math.Between(40, 90))
         .setDepth(16);
+      // Physics body matched to reduced 46×46 texture
+      sat.setSize(40, 40);
       this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0 });
 
       // From level 2+, show a spawn warning arrow
@@ -974,10 +1038,7 @@
         d.sprite.y = d.baseY + Math.sin(time * 0.002) * 7;
         d.sprite.refreshBody(); // update static body position
 
-        // Shield rotates clockwise
-        if (d.type === 'powerup_shield') {
-          d.sprite.angle += 0.4;
-        }
+        // Shield: bob only — no rotation (rotation removed per spec)
 
         // Vacuum: draw orbiting white dots
         if (d.type === 'powerup_vacuum' && d.sprite.active) {
@@ -1052,12 +1113,14 @@
       this._collected++;
       AM.playCollectSound();
 
-      // Score pop-up
+      // Score pop-up — 20px bold, black drop shadow, spawns above debris, floats 40px in 0.8s
       const popTxt = this._comboActive ? `+${pts} x2!` : `+${pts}`;
-      const pop = this.add.text(piece.x, piece.y - 14, popTxt, {
-        font: 'bold 14px "Courier New"', fill: this._comboActive ? '#ffdd00' : '#ffff44'
+      const pop = this.add.text(piece.x, piece.y - 18, popTxt, {
+        font: 'bold 20px "Courier New"',
+        fill: this._comboActive ? '#ffdd00' : '#ffff44',
+        shadow: { offsetX: 2, offsetY: 2, color: '#000000', fill: true }
       }).setDepth(50).setOrigin(0.5);
-      this.tweens.add({ targets: pop, y: pop.y - 34, alpha: 0, duration: 750, onComplete: () => pop.destroy() });
+      this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 800, onComplete: () => pop.destroy() });
 
       // Combo tracking
       const now = this.time.now;
@@ -1073,10 +1136,12 @@
     _activateCombo() {
       this._comboActive = true;
       this._comboTimer  = 5;
+      // Anchor to current player position, float upward and fade same as score pop-ups
       const { x, y } = this._player;
       const comboTxt = this.add.text(x, y - 50, 'x2 COMBO!', {
-        font: 'bold 22px "Courier New"', fill: '#ffdd00',
-        stroke: '#886600', strokeThickness: 3
+        font: 'bold 24px "Courier New"',
+        fill: '#ffd700',
+        shadow: { offsetX: 2, offsetY: 2, color: '#000000', fill: true }
       }).setDepth(60).setOrigin(0.5);
       this.tweens.add({ targets: comboTxt, y: y - 90, alpha: 0, duration: 1800, onComplete: () => comboTxt.destroy() });
     }
@@ -1247,7 +1312,7 @@
             // All levels complete — true mission complete
             this.scene.start('GameOverScene', { missionComplete: true, score: this._score });
           } else {
-            this.scene.start('LevelCompleteScene', { level: this._level, score: this._score });
+            this.scene.start('LevelCompleteScene', { level: this._level, score: this._score, timeLeft: this._timeLeft });
           }
         });
       } else {
@@ -1266,8 +1331,9 @@
     constructor() { super({ key: 'LevelCompleteScene' }); }
 
     init(data) {
-      this._level = data.level;
-      this._score = data.score;
+      this._level    = data.level;
+      this._score    = data.score;
+      this._timeLeft = data.timeLeft || 0;
     }
 
     create() {
@@ -1277,52 +1343,81 @@
       AM.playMenuMusic();
 
       const { width, height } = this.scale;
-      const nextLevel = this._level + 1;
-      const nextCfg   = LEVELS[nextLevel - 1];
+      const nextLevel  = this._level + 1;
+      const nextCfg    = LEVELS[nextLevel - 1];
+      const timeBonus  = this._timeLeft * 5;
+      const totalScore = this._score + timeBonus;
 
-      // Panel
-      const panel = this.add.graphics();
-      panel.fillStyle(0x001133, 0.88);
-      panel.fillRoundedRect(width/2 - 260, 120, 520, 340, 14);
-      panel.lineStyle(2, 0x3366cc, 1);
-      panel.strokeRoundedRect(width/2 - 260, 120, 520, 340, 14);
+      // ── Slide-in container — starts above screen, tweens to y=0 ─────────
+      const container = this.add.container(0, -300);
 
-      this.add.text(width/2, 155, `LEVEL ${this._level} COMPLETE!`, {
+      // Panel background
+      const panelGfx = this.add.graphics();
+      panelGfx.fillStyle(0x001133, 0.90);
+      panelGfx.fillRoundedRect(width/2 - 270, 90, 540, 430, 14);
+      panelGfx.lineStyle(2, 0x3366cc, 1);
+      panelGfx.strokeRoundedRect(width/2 - 270, 90, 540, 430, 14);
+      container.add(panelGfx);
+
+      const addText = (x, y, txt, style) => {
+        const t = this.add.text(x, y, txt, style).setOrigin(0.5);
+        container.add(t);
+        return t;
+      };
+
+      addText(width/2, 128, `LEVEL ${this._level} COMPLETE!`, {
         font: 'bold 38px "Courier New"', fill: '#66ff88',
         stroke: '#004422', strokeThickness: 5,
         shadow: { color: '#00ff88', blur: 20, fill: true }
-      }).setOrigin(0.5);
+      });
 
-      this.add.text(width/2, 225, `Score so far:`, {
-        font: '18px "Courier New"', fill: '#aaddff'
-      }).setOrigin(0.5);
-      this.add.text(width/2, 258, `${this._score}`, {
-        font: 'bold 40px "Courier New"', fill: '#ffdd44',
+      addText(width/2, 195, `Score this level:`, {
+        font: '17px "Courier New"', fill: '#aaddff'
+      });
+      addText(width/2, 225, `${this._score}`, {
+        font: 'bold 36px "Courier New"', fill: '#ffdd44',
         stroke: '#664400', strokeThickness: 4
-      }).setOrigin(0.5);
+      });
 
-      this.add.text(width/2, 310, `Next up — Level ${nextLevel}`, {
+      // Time Bonus calculation line
+      addText(width/2, 275,
+        `Time Bonus: ${this._timeLeft}s \u00d7 5 = +${timeBonus} pts`,
+        { font: '17px "Courier New"', fill: '#66ff88' }
+      );
+
+      // Total score
+      addText(width/2, 308, `Total Score: ${totalScore}`, {
+        font: 'bold 26px "Courier New"', fill: '#ffee66',
+        stroke: '#664400', strokeThickness: 3
+      });
+
+      addText(width/2, 356, `Next up \u2014 Level ${nextLevel}`, {
         font: '16px "Courier New"', fill: '#88aacc'
-      }).setOrigin(0.5);
-      this.add.text(width/2, 332,
-        `${nextCfg.debris} debris  •  ${nextCfg.timer}s  •  ${nextCfg.enemies} enemies`,
-        { font: '14px "Courier New"', fill: '#667799' }
-      ).setOrigin(0.5);
+      });
+      addText(width/2, 382,
+        `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`,
+        { font: '18px "Courier New"', fill: '#aabbdd' }
+      );
 
       // Next Level button
-      const btn = this.add.text(width/2, 402, '[ NEXT LEVEL ]', {
+      const btn = this.add.text(width/2, 443, '[ NEXT LEVEL ]', {
         font: 'bold 26px "Courier New"', fill: '#ffffff',
         backgroundColor: '#004400', padding: { x:20, y:12 },
         stroke: '#00cc44', strokeThickness: 3
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      container.add(btn);
       btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#006600' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#004400' }));
       btn.on('pointerdown', () => {
         this.game.registry.set('currentLevel', this._level + 1);
+        this.game.registry.set('score', totalScore);
         AM.playGameMusic();
         this.scene.start('GameScene');
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1 });
+
+      // Slide panel in from top over 0.4 s
+      this.tweens.add({ targets: container, y: 0, duration: 400, ease: 'Power2.easeOut' });
     }
   }
 
