@@ -55,6 +55,18 @@ A 2D arcade browser game built with Phaser 3. The player pilots a janitor spaces
 - **Level intro card**: 2.2s overlay (0.3s fade-in, 1.6s hold, 0.3s fade-out) before gameplay begins; blocks movement and timer
 - **Local leaderboard**: top-5 scores in localStorage; shown on MenuScene; "NEW HIGH SCORE!" flash on GameOverScene
 
+### v3 additions
+- **Screen shake**: camera shake on player hit, enemy kill, dash, EMP, boss hit, boss phase 2 trigger, boss death, combo activation
+- **3 new power-ups**: Speed Boost (green, 8s, +59% max speed), Time Freeze (ice blue, 5s, slows all enemies to 8%), EMP (yellow, instant pushback + stun on all enemies + 2.2s boss stun + shockwave ring)
+- **Power-up pool unlocks by level**: L1=shield+vacuum, L2+=speed, L3+=freeze, L4-5+=emp; shuffled each spawn
+- **Player dash/dodge**: SHIFT key fires a 580px/s impulse in the ship's facing direction; 2.5s cooldown shown as a filling arc ring around the player
+- **3 enemy types**: Seeker (red, direct seek — existing), Bomber (purple hexagon, slow seek + drops debris every 4-7s), Patrol (green octagon, orbits a fixed center point with solar panels)
+- **Enemy type distribution by level**: L1 seekers only; L2 adds bombers; L3 adds patrol; L4 all three; L5 mixes all three
+- **Level 5 Boss**: 30 HP; phase 1 = slow seek (72px/s); phase 2 triggered at 50% HP = faster (115px/s) + fires magenta enemy bolts at player every 2.4s; +10 pts per hit, +500 pts on kill; boss HP bar in HUD; big death explosion + screen flash; win requires both all debris collected AND boss dead
+- **Debris particle trails**: each frame draws 4 fading velocity-direction dots behind every moving debris piece on fxGfx
+- **Improved pause menu**: dark panel with "PAUSED" title + animated RESUME button + MAIN MENU button + controls reference; both buttons fully interactive
+- **Mobile/touch controls**: virtual joystick (left half, dynamic placement on touch), FIRE button (right side, shows pressed state), DASH button (right side, shows cooldown arc); always rendered at low opacity so keyboard players are unaffected
+
 ## User preferences
 
 - Game spec: single index.html, Phaser 3 CDN, Web Audio API, all graphics drawn programmatically

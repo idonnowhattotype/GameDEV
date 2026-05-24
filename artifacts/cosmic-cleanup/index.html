@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Cosmic Cleanup: The Space Janitor</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; }
     body {
       background: #000;
       display: flex;
@@ -24,17 +24,19 @@
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LEVEL CONFIGURATION TABLE
-  // enemyHp: HP per satellite. respawnDelay: ms before respawn. enemyCap: max active.
+  // enemyTypes: 'seeker' (seeks player), 'bomber' (drops debris), 'patrol' (circles a point)
+  // hasBoss / bossHp: level 5 spawns a boss
   // ═══════════════════════════════════════════════════════════════════════════
   const LEVELS = [
-    { debris:15, timer:60, enemies:2, enemySpeed:60,  powerups:2, bg:0x0a0a2e, enemyHp:3, respawnDelay:12000, enemyCap:3 },
-    { debris:18, timer:55, enemies:3, enemySpeed:80,  powerups:2, bg:0x0d0a2e, enemyHp:3, respawnDelay:10000, enemyCap:4 },
-    { debris:20, timer:50, enemies:3, enemySpeed:100, powerups:3, bg:0x0a1a2e, enemyHp:4, respawnDelay: 8000, enemyCap:5 },
-    { debris:22, timer:45, enemies:4, enemySpeed:120, powerups:2, bg:0x1a0a0e, enemyHp:4, respawnDelay: 6000, enemyCap:6 },
-    { debris:25, timer:40, enemies:5, enemySpeed:140, powerups:3, bg:0x1a0505, enemyHp:5, respawnDelay: 4000, enemyCap:8 },
+    { debris:15, timer:60, enemies:2, enemySpeed:60,  powerups:2, bg:0x0a0a2e, enemyHp:3, respawnDelay:12000, enemyCap:3, enemyTypes:['seeker','seeker'],                   hasBoss:false },
+    { debris:18, timer:55, enemies:3, enemySpeed:80,  powerups:2, bg:0x0d0a2e, enemyHp:3, respawnDelay:10000, enemyCap:4, enemyTypes:['seeker','seeker','bomber'],          hasBoss:false },
+    { debris:20, timer:50, enemies:3, enemySpeed:100, powerups:3, bg:0x0a1a2e, enemyHp:4, respawnDelay: 8000, enemyCap:5, enemyTypes:['seeker','bomber','patrol'],          hasBoss:false },
+    { debris:22, timer:45, enemies:4, enemySpeed:120, powerups:2, bg:0x1a0a0e, enemyHp:4, respawnDelay: 6000, enemyCap:6, enemyTypes:['seeker','seeker','bomber','patrol'], hasBoss:false },
+    { debris:25, timer:40, enemies:4, enemySpeed:140, powerups:3, bg:0x1a0505, enemyHp:5, respawnDelay: 4000, enemyCap:7, enemyTypes:['seeker','bomber','patrol','seeker'], hasBoss:true,  bossHp:30 },
   ];
   const TOTAL_LEVELS  = LEVELS.length;
   const VACUUM_RADIUS = 170;
+  const DASH_COOLDOWN_MAX = 2.5;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LEADERBOARD HELPERS — localStorage, top-5 by score
@@ -47,7 +49,6 @@
     try { localStorage.setItem('cosmicCleanup_leaderboard', JSON.stringify(entries)); }
     catch(e) {}
   }
-  /** Insert a score. Returns true if the entry qualifies for the top-5. */
   function lbInsert(score, level) {
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const now  = new Date();
@@ -70,11 +71,7 @@
   // AUDIO MANAGER — all sound generated via Web Audio API, no external files
   // ═══════════════════════════════════════════════════════════════════════════
   class AudioManager {
-    constructor() {
-      this._ctx = null;
-      this._musicNodes = [];
-      this._subBassInterval = null;
-    }
+    constructor() { this._ctx = null; this._musicNodes = []; this._subBassInterval = null; }
 
     _getCtx() {
       if (!this._ctx) this._ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -85,8 +82,7 @@
     _tone(freq, dur, type = 'sine', gain = 0.25, startOffset = 0) {
       try {
         const ctx = this._getCtx();
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
+        const osc = ctx.createOscillator(), g = ctx.createGain();
         osc.connect(g); g.connect(ctx.destination);
         osc.type = type;
         osc.frequency.setValueAtTime(freq, ctx.currentTime + startOffset);
@@ -151,7 +147,7 @@
       } catch(e) {}
     }
 
-    playCollectSound()      { this._tone(440, 0.05, 'triangle', 0.2); this._tone(880, 0.10, 'triangle', 0.18, 0.05); }
+    playCollectSound()    { this._tone(440, 0.05, 'triangle', 0.2); this._tone(880, 0.10, 'triangle', 0.18, 0.05); }
     playHitSound() {
       try {
         const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
@@ -164,8 +160,8 @@
         osc.start(); osc.stop(ctx.currentTime + 0.31);
       } catch(e) {}
     }
-    playPowerUpSound()         { [523, 659, 784].forEach((f, i) => this._tone(f, 0.12, 'sine', 0.25, i * 0.12)); }
-    playLevelCompleteSound()   { [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.15, 'sine', 0.3, i * 0.15)); }
+    playPowerUpSound()       { [523, 659, 784].forEach((f, i) => this._tone(f, 0.12, 'sine', 0.25, i * 0.12)); }
+    playLevelCompleteSound() { [523, 659, 784, 1047].forEach((f, i) => this._tone(f, 0.15, 'sine', 0.3, i * 0.15)); }
     playRocketBoostSound() {
       try {
         const ctx = this._getCtx(), rate = ctx.sampleRate;
@@ -195,11 +191,7 @@
         osc.start(); osc.stop(ctx.currentTime + 0.81);
       } catch(e) {}
     }
-
-    /** Quiet laser blip for player shooting. */
-    playShootSound() { this._tone(900, 0.04, 'triangle', 0.13); }
-
-    /** Small explosion pop when enemy satellite is destroyed. */
+    playShootSound()   { this._tone(900, 0.04, 'triangle', 0.13); }
     playEnemyDestroySound() {
       try {
         const ctx = this._getCtx(), rate = ctx.sampleRate;
@@ -209,14 +201,11 @@
         const src = ctx.createBufferSource(); src.buffer = buf;
         const filter = ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 300; filter.Q.value = 2;
         const gain = ctx.createGain(), t = ctx.currentTime;
-        gain.gain.setValueAtTime(0.4, t);
-        gain.gain.linearRampToValueAtTime(0, t + 0.3);
+        gain.gain.setValueAtTime(0.4, t); gain.gain.linearRampToValueAtTime(0, t + 0.3);
         src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
         src.start(t); src.stop(t + 0.3);
       } catch(e) {}
     }
-
-    /** Rising tone when level intro card appears. */
     playIntroSound() {
       try {
         const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
@@ -230,6 +219,69 @@
         osc.start(); osc.stop(ctx.currentTime + 0.65);
       } catch(e) {}
     }
+
+    // NEW SOUNDS
+    playDashSound() {
+      try {
+        const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(500, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.18);
+        g.gain.setValueAtTime(0.28, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+        osc.start(); osc.stop(ctx.currentTime + 0.19);
+      } catch(e) {}
+    }
+    playFreezeSound() { [1047, 1319, 1568, 2093].forEach((f, i) => this._tone(f, 0.14, 'sine', 0.18, i * 0.09)); }
+    playEMPSound() {
+      try {
+        const ctx = this._getCtx(), rate = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, Math.floor(rate * 0.35), rate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        const filter = ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 1400; filter.Q.value = 1.2;
+        const g = ctx.createGain(), t = ctx.currentTime;
+        g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+        src.connect(filter); filter.connect(g); g.connect(ctx.destination);
+        src.start(t); src.stop(t + 0.35);
+      } catch(e) {}
+    }
+    playBossHitSound() {
+      try {
+        const ctx = this._getCtx(), osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(90, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.22);
+        g.gain.setValueAtTime(0.38, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+        osc.start(); osc.stop(ctx.currentTime + 0.23);
+      } catch(e) {}
+    }
+    playBossDeathSound() {
+      try {
+        const ctx = this._getCtx(), rate = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, Math.floor(rate * 1.0), rate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 600; filter.Q.value = 0.5;
+        const g = ctx.createGain(), t = ctx.currentTime;
+        g.gain.setValueAtTime(0.55, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+        src.connect(filter); filter.connect(g); g.connect(ctx.destination);
+        src.start(t); src.stop(t + 1.0);
+        const osc = ctx.createOscillator(), g2 = ctx.createGain();
+        osc.connect(g2); g2.connect(ctx.destination);
+        osc.type = 'sine'; osc.frequency.value = 55;
+        g2.gain.setValueAtTime(0.45, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        osc.start(t); osc.stop(t + 0.91);
+      } catch(e) {}
+    }
+    playBossPhase2Sound() { [180, 270, 360, 540].forEach((f, i) => this._tone(f, 0.22, 'sawtooth', 0.14, i * 0.1)); }
+    playEnemyShootSound() { this._tone(280, 0.07, 'square', 0.08); }
+    playSpeedSound()      { this._tone(660, 0.06, 'triangle', 0.2); this._tone(990, 0.09, 'triangle', 0.18, 0.06); }
   }
   const AM = new AudioManager();
 
@@ -267,12 +319,9 @@
 
     // ── Debris variants (44 × 44 each) ──────────────────────────────────────
     const debrisColorSets = [
-      { outer: 0x555555, inner: 0xaaaaaa },
-      { outer: 0x4a4a4a, inner: 0x888888 },
-      { outer: 0x666666, inner: 0xbbbbbb },
-      { outer: 0x6B4010, inner: 0x9B6030 },
-      { outer: 0x503a20, inner: 0x8a6040 },
-      { outer: 0x5a5060, inner: 0x9090a0 },
+      { outer: 0x555555, inner: 0xaaaaaa }, { outer: 0x4a4a4a, inner: 0x888888 },
+      { outer: 0x666666, inner: 0xbbbbbb }, { outer: 0x6B4010, inner: 0x9B6030 },
+      { outer: 0x503a20, inner: 0x8a6040 }, { outer: 0x5a5060, inner: 0x9090a0 },
     ];
     for (let v = 0; v < 6; v++) {
       if (scene.textures.exists(`debris_${v}`)) continue;
@@ -296,7 +345,7 @@
       g.destroy();
     }
 
-    // ── Enemy Rogue Satellite (46 × 46) ─────────────────────────────────────
+    // ── Enemy Rogue Satellite / Seeker (46 × 46) ─────────────────────────────
     if (!scene.textures.exists('satellite')) {
       const g = scene.add.graphics();
       const cx = 23, cy = 23, bodyR = 8;
@@ -329,7 +378,93 @@
       g.destroy();
     }
 
-    // ── Shield Power-up (52 × 52) ────────────────────────────────────────────
+    // ── Bomber enemy (46 × 46) — purple, drops debris ────────────────────────
+    if (!scene.textures.exists('bomber')) {
+      const g = scene.add.graphics();
+      const cx = 23, cy = 23;
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2 - Math.PI / 6;
+        pts.push({ x: cx + 13 * Math.cos(ang), y: cy + 13 * Math.sin(ang) });
+      }
+      g.fillStyle(0x550066, 1); g.fillPoints(pts, true);
+      g.fillStyle(0x8800aa, 0.75);
+      const innerPts = pts.map(p => ({ x: cx + (p.x - cx) * 0.55, y: cy + (p.y - cy) * 0.55 }));
+      g.fillPoints(innerPts, true);
+      g.lineStyle(2, 0xcc44ff, 0.9); g.strokePoints(pts, true);
+      for (let i = 0; i < 3; i++) {
+        const ang = (i / 3) * Math.PI * 2;
+        const px = cx + 8 * Math.cos(ang), py = cy + 8 * Math.sin(ang);
+        g.fillStyle(0xff6600, 0.9); g.fillCircle(px, py, 3.5);
+        g.fillStyle(0xffcc00, 1); g.fillCircle(px, py, 1.8);
+      }
+      g.fillStyle(0xff44bb, 1); g.fillCircle(cx, cy, 4.5);
+      g.fillStyle(0xffffff, 0.8); g.fillCircle(cx - 1.5, cy - 1.5, 2);
+      g.generateTexture('bomber', 46, 46);
+      g.destroy();
+    }
+
+    // ── Patrol enemy (46 × 46) — green, orbits a fixed point ─────────────────
+    if (!scene.textures.exists('patrol')) {
+      const g = scene.add.graphics();
+      const cx = 23, cy = 23;
+      const pts = [];
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        pts.push({ x: cx + 14 * Math.cos(ang), y: cy + 14 * Math.sin(ang) });
+      }
+      g.fillStyle(0x003322, 1); g.fillPoints(pts, true);
+      g.fillStyle(0x00aa44, 0.65);
+      const innerPts2 = pts.map(p => ({ x: cx + (p.x - cx) * 0.52, y: cy + (p.y - cy) * 0.52 }));
+      g.fillPoints(innerPts2, true);
+      g.lineStyle(2, 0x44ffaa, 0.9); g.strokePoints(pts, true);
+      g.fillStyle(0x006644, 0.85);
+      g.fillRect(cx - 20, cy - 3, 11, 6);
+      g.fillRect(cx + 9,  cy - 3, 11, 6);
+      g.lineStyle(1, 0x44ffaa, 0.6);
+      g.strokeRect(cx - 20, cy - 3, 11, 6);
+      g.strokeRect(cx + 9,  cy - 3, 11, 6);
+      g.fillStyle(0x00ff88, 1); g.fillCircle(cx, cy, 5.5);
+      g.fillStyle(0xaaffcc, 0.9); g.fillCircle(cx - 1.5, cy - 1.5, 2.5);
+      g.generateTexture('patrol', 46, 46);
+      g.destroy();
+    }
+
+    // ── Boss (80 × 80) — large multi-spike monstrosity ────────────────────────
+    if (!scene.textures.exists('boss')) {
+      const g = scene.add.graphics();
+      const cx = 40, cy = 40, bodyR = 16;
+      g.fillStyle(0xff0000, 0.12); g.fillCircle(cx, cy, 39);
+      for (let i = 0; i < 14; i++) {
+        const ang = (i / 14) * Math.PI * 2;
+        const tipR = i % 3 === 0 ? 37 : i % 2 === 0 ? 31 : 27;
+        const s1 = ang - 0.17, s2 = ang + 0.17;
+        g.fillStyle(0xaa0000, 1);
+        g.fillPoints([
+          { x: cx + bodyR * Math.cos(s1), y: cy + bodyR * Math.sin(s1) },
+          { x: cx + tipR  * Math.cos(ang), y: cy + tipR  * Math.sin(ang) },
+          { x: cx + bodyR * Math.cos(s2), y: cy + bodyR * Math.sin(s2) },
+        ], true);
+      }
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * Math.PI * 2 + Math.PI / 7;
+        g.fillStyle(0xdd2200, 1);
+        g.fillPoints([
+          { x: cx + 8 * Math.cos(ang - 0.28), y: cy + 8 * Math.sin(ang - 0.28) },
+          { x: cx + 20 * Math.cos(ang),        y: cy + 20 * Math.sin(ang) },
+          { x: cx + 8 * Math.cos(ang + 0.28), y: cy + 8 * Math.sin(ang + 0.28) },
+        ], true);
+      }
+      g.fillStyle(0x660000, 1); g.fillCircle(cx, cy, bodyR);
+      g.fillStyle(0xcc1100, 1); g.fillCircle(cx, cy, 10);
+      g.fillStyle(0xff3300, 0.9); g.fillCircle(cx, cy, 6);
+      g.fillStyle(0xff8800, 0.85); g.fillCircle(cx, cy, 3);
+      g.fillStyle(0xffffff, 0.7); g.fillCircle(cx - 2, cy - 2, 2);
+      g.generateTexture('boss', 80, 80);
+      g.destroy();
+    }
+
+    // ── Shield Power-up (52 × 52) ─────────────────────────────────────────────
     if (!scene.textures.exists('powerup_shield')) {
       const g = scene.add.graphics();
       const cx = 26, cy = 26, r = 21;
@@ -350,7 +485,7 @@
       g.destroy();
     }
 
-    // ── Vacuum Power-up (52 × 52) ────────────────────────────────────────────
+    // ── Vacuum Power-up (52 × 52) ─────────────────────────────────────────────
     if (!scene.textures.exists('powerup_vacuum')) {
       const g = scene.add.graphics();
       const cx = 26, cy = 26;
@@ -368,7 +503,80 @@
       g.destroy();
     }
 
-    // ── HUD Heart (24 × 22) ──────────────────────────────────────────────────
+    // ── Speed Power-up (52 × 52) — green lightning bolt ──────────────────────
+    if (!scene.textures.exists('powerup_speed')) {
+      const g = scene.add.graphics();
+      const cx = 26, cy = 26;
+      g.fillStyle(0x00ff44, 0.18); g.fillCircle(cx, cy, 24);
+      g.fillStyle(0x00ff88, 1);
+      g.fillPoints([
+        {x:cx+3,y:7},{x:cx-4,y:23},{x:cx+5,y:23},{x:cx-5,y:45},
+        {x:cx+11,y:27},{x:cx+2,y:27},{x:cx+12,y:7}
+      ], true);
+      g.lineStyle(1.5, 0xaaffcc, 0.8);
+      g.strokePoints([
+        {x:cx+3,y:7},{x:cx-4,y:23},{x:cx+5,y:23},{x:cx-5,y:45},
+        {x:cx+11,y:27},{x:cx+2,y:27},{x:cx+12,y:7}
+      ], true);
+      g.fillStyle(0xffffff, 0.5); g.fillCircle(cx+4, 12, 2);
+      g.generateTexture('powerup_speed', 52, 52);
+      g.destroy();
+    }
+
+    // ── Freeze Power-up (52 × 52) — ice blue snowflake ───────────────────────
+    if (!scene.textures.exists('powerup_freeze')) {
+      const g = scene.add.graphics();
+      const cx = 26, cy = 26;
+      g.fillStyle(0x0088cc, 0.22); g.fillCircle(cx, cy, 24);
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2;
+        g.lineStyle(3, 0x88ddff, 1);
+        g.beginPath(); g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(ang) * 19, cy + Math.sin(ang) * 19);
+        g.strokePath();
+        for (let b = -1; b <= 1; b += 2) {
+          const bAng = ang + b * Math.PI / 3;
+          const bx = cx + Math.cos(ang) * 11, by = cy + Math.sin(ang) * 11;
+          g.lineStyle(1.5, 0xaaeeff, 0.8);
+          g.beginPath(); g.moveTo(bx, by);
+          g.lineTo(bx + Math.cos(bAng) * 6, by + Math.sin(bAng) * 6);
+          g.strokePath();
+        }
+      }
+      g.fillStyle(0xaaeeff, 1); g.fillCircle(cx, cy, 5.5);
+      g.fillStyle(0xffffff, 0.9); g.fillCircle(cx, cy, 2.5);
+      g.generateTexture('powerup_freeze', 52, 52);
+      g.destroy();
+    }
+
+    // ── EMP Power-up (52 × 52) — yellow electric burst ────────────────────────
+    if (!scene.textures.exists('powerup_emp')) {
+      const g = scene.add.graphics();
+      const cx = 26, cy = 26;
+      g.fillStyle(0xffff00, 0.18); g.fillCircle(cx, cy, 24);
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        g.lineStyle(2.5, 0xffdd00, 1);
+        g.beginPath();
+        g.moveTo(cx + Math.cos(ang) * 8, cy + Math.sin(ang) * 8);
+        g.lineTo(cx + Math.cos(ang) * 20, cy + Math.sin(ang) * 20);
+        g.strokePath();
+      }
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2 + Math.PI / 8;
+        g.lineStyle(1.5, 0xffaa00, 0.7);
+        g.beginPath();
+        g.moveTo(cx + Math.cos(ang) * 9, cy + Math.sin(ang) * 9);
+        g.lineTo(cx + Math.cos(ang) * 16, cy + Math.sin(ang) * 16);
+        g.strokePath();
+      }
+      g.fillStyle(0xffff88, 1); g.fillCircle(cx, cy, 7.5);
+      g.fillStyle(0xffffff, 1); g.fillCircle(cx, cy, 3.5);
+      g.generateTexture('powerup_emp', 52, 52);
+      g.destroy();
+    }
+
+    // ── HUD Heart (24 × 22) ───────────────────────────────────────────────────
     if (!scene.textures.exists('heart')) {
       const g = scene.add.graphics();
       g.fillStyle(0xff2244, 1);
@@ -379,7 +587,7 @@
       g.destroy();
     }
 
-    // ── Thruster Particle (8 × 8) ────────────────────────────────────────────
+    // ── Thruster Particle (8 × 8) ─────────────────────────────────────────────
     if (!scene.textures.exists('particle')) {
       const g = scene.add.graphics();
       g.fillStyle(0xff8800, 1); g.fillCircle(4, 4, 4);
@@ -387,7 +595,7 @@
       g.destroy();
     }
 
-    // ── Spawn Warning Arrow (32 × 24) ────────────────────────────────────────
+    // ── Spawn Warning Arrow (32 × 24) ─────────────────────────────────────────
     if (!scene.textures.exists('spawn_arrow')) {
       const g = scene.add.graphics();
       g.fillStyle(0xff0000, 0.9); g.fillTriangle(16, 0, 32, 24, 0, 24);
@@ -396,16 +604,22 @@
       g.destroy();
     }
 
-    // ── Bullet projectile (12 × 22) — cyan laser bolt ───────────────────────
+    // ── Player Bullet (12 × 22) — cyan laser bolt ─────────────────────────────
     if (!scene.textures.exists('bullet')) {
       const g = scene.add.graphics();
-      // Outer cyan diamond
       g.fillStyle(0x00ffff, 0.9);
       g.fillPoints([{x:6,y:0},{x:10,y:11},{x:6,y:22},{x:2,y:11}], true);
-      // White inner core ellipse
-      g.fillStyle(0xffffff, 1);
-      g.fillEllipse(6, 11, 3, 8);
+      g.fillStyle(0xffffff, 1); g.fillEllipse(6, 11, 3, 8);
       g.generateTexture('bullet', 12, 22);
+      g.destroy();
+    }
+
+    // ── Enemy Bullet (10 × 10) — magenta ball ────────────────────────────────
+    if (!scene.textures.exists('enemy_bullet')) {
+      const g = scene.add.graphics();
+      g.fillStyle(0xff00bb, 0.9); g.fillCircle(5, 5, 5);
+      g.fillStyle(0xffaaee, 1); g.fillCircle(5, 5, 2.5);
+      g.generateTexture('enemy_bullet', 10, 10);
       g.destroy();
     }
   }
@@ -417,27 +631,22 @@
     const { width, height } = scene.scale;
     const bg = scene.add.graphics();
     const bgColor = scene.game.registry.get('bgColor') || 0x000011;
-    bg.fillStyle(bgColor, 1);
-    bg.fillRect(0, 0, width, height);
-
+    bg.fillStyle(bgColor, 1); bg.fillRect(0, 0, width, height);
     const count = dynamic ? 160 : 220;
     if (dynamic) {
       scene.starDots = [];
       for (let i = 0; i < count; i++) {
-        const x = Phaser.Math.Between(0, width);
-        const y = Phaser.Math.Between(0, height);
-        const size  = Math.random() < 0.12 ? 2 : 1;
+        const x = Phaser.Math.Between(0, width), y = Phaser.Math.Between(0, height);
+        const size = Math.random() < 0.12 ? 2 : 1;
         const alpha = Phaser.Math.FloatBetween(0.25, 1.0);
-        const dot   = scene.add.rectangle(x, y, size, size, 0xffffff, alpha);
-        dot.scrollFactor = 0;
-        dot._speed = Phaser.Math.FloatBetween(0.12, 0.55);
+        const dot = scene.add.rectangle(x, y, size, size, 0xffffff, alpha);
+        dot.scrollFactor = 0; dot._speed = Phaser.Math.FloatBetween(0.12, 0.55);
         scene.starDots.push(dot);
       }
     } else {
       const g = scene.add.graphics();
       for (let i = 0; i < count; i++) {
-        const x = Phaser.Math.Between(0, width);
-        const y = Phaser.Math.Between(0, height);
+        const x = Phaser.Math.Between(0, width), y = Phaser.Math.Between(0, height);
         const r = Math.random() < 0.1 ? 1.5 : 0.8;
         g.fillStyle(0xffffff, Phaser.Math.FloatBetween(0.3, 1.0));
         g.fillCircle(x, y, r);
@@ -462,33 +671,26 @@
 
       const { width, height } = this.scale;
 
-      // Title
       this.add.text(width/2, 76, 'COSMIC CLEANUP', {
         font: 'bold 44px "Courier New"', fill: '#66ddff',
         stroke: '#003366', strokeThickness: 6,
         shadow: { color: '#00aaff', blur: 24, fill: true }
       }).setOrigin(0.5);
-      this.add.text(width/2, 122, 'The Space Janitor', {
-        font: '20px "Courier New"', fill: '#aaddff'
-      }).setOrigin(0.5);
-
+      this.add.text(width/2, 122, 'The Space Janitor', { font: '20px "Courier New"', fill: '#aaddff' }).setOrigin(0.5);
       this.add.text(width/2, 188,
         '"A VIP space cruiser is inbound.\nClear Earth\'s orbit across 5 levels\nbefore it docks — or face the consequences."',
         { font: '14px "Courier New"', fill: '#cceecc', align: 'center', lineSpacing: 5 }
       ).setOrigin(0.5);
-
       this.add.text(width/2, 256,
         'LEVEL 1 — 15 debris / 60s   LEVEL 2 — 18 debris / 55s\n' +
         'LEVEL 3 — 20 debris / 50s   LEVEL 4 — 22 debris / 45s\n' +
-        '              LEVEL 5 — 25 debris / 40s',
+        '              LEVEL 5 — 25 debris / 40s  +  BOSS',
         { font: '11px "Courier New"', fill: '#7799bb', align: 'center', lineSpacing: 3 }
       ).setOrigin(0.5);
-
-      this.add.text(width/2, 306, 'SPACE to shoot  •  WASD / Arrows to move  •  P to pause', {
+      this.add.text(width/2, 306, 'SPACE shoot  •  SHIFT dash  •  WASD / Arrows move  •  P pause', {
         font: '11px "Courier New"', fill: '#88aacc'
       }).setOrigin(0.5);
 
-      // Start button
       const btn = this.add.text(width/2, 336, '[ START MISSION ]', {
         font: 'bold 26px "Courier New"', fill: '#ffffff',
         backgroundColor: '#003388', padding: { x:20, y:11 },
@@ -497,61 +699,36 @@
       btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#0055cc' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#003388' }));
       btn.on('pointerdown', () => {
-        AM._getCtx();
-        AM.stopMusic();
-        AM.playGameMusic();
+        AM._getCtx(); AM.stopMusic(); AM.playGameMusic();
         this.scene.start('GameScene');
       });
       this.tweens.add({ targets: btn, scaleX:1.05, scaleY:1.05, duration:900, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
 
       const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-      spaceKey.once('down', () => {
-        AM._getCtx(); AM.stopMusic(); AM.playGameMusic();
-        this.scene.start('GameScene');
-      });
+      spaceKey.once('down', () => { AM._getCtx(); AM.stopMusic(); AM.playGameMusic(); this.scene.start('GameScene'); });
 
-      // ── Leaderboard panel ─────────────────────────────────────────────────
+      // Leaderboard panel
       const lb = lbLoad();
       const panelX = width/2 - 170, panelY = 372, panelW = 340, panelH = 156;
       const panelGfx = this.add.graphics();
-      panelGfx.fillStyle(0x000033, 0.80);
-      panelGfx.fillRoundedRect(panelX, panelY, panelW, panelH, 8);
-      panelGfx.lineStyle(1, 0x00aaff, 0.7);
-      panelGfx.strokeRoundedRect(panelX, panelY, panelW, panelH, 8);
-
-      this.add.text(width/2, panelY + 14, 'HIGH SCORES', {
-        font: 'bold 12px "Courier New"', fill: '#00ccff'
-      }).setOrigin(0.5);
-
-      const isNewHigh  = this.game.registry.get('isNewHighScore');
-      const justScore  = this.game.registry.get('score') || 0;
-
+      panelGfx.fillStyle(0x000033, 0.80); panelGfx.fillRoundedRect(panelX, panelY, panelW, panelH, 8);
+      panelGfx.lineStyle(1, 0x00aaff, 0.7); panelGfx.strokeRoundedRect(panelX, panelY, panelW, panelH, 8);
+      this.add.text(width/2, panelY + 14, 'HIGH SCORES', { font: 'bold 12px "Courier New"', fill: '#00ccff' }).setOrigin(0.5);
+      const isNewHigh = this.game.registry.get('isNewHighScore');
+      const justScore = this.game.registry.get('score') || 0;
       for (let i = 0; i < 5; i++) {
-        const entry   = lb[i];
-        const rowY    = panelY + 32 + i * 23;
-        const rankCol = '#88aacc';
-        const isNew   = isNewHigh && entry && entry.score === justScore;
-
-        this.add.text(panelX + 16, rowY, `#${i+1}`, {
-          font: '13px "Courier New"', fill: rankCol
-        });
+        const entry = lb[i];
+        const rowY  = panelY + 32 + i * 23;
+        const isNew = isNewHigh && entry && entry.score === justScore;
+        this.add.text(panelX + 16, rowY, `#${i+1}`, { font: '13px "Courier New"', fill: '#88aacc' });
         if (entry) {
-          this.add.text(panelX + 50, rowY, `${entry.score}`, {
-            font: `bold 13px "Courier New"`, fill: isNew ? '#ffffff' : '#ffd700'
-          });
-          this.add.text(panelX + 140, rowY, `Lv ${entry.level}`, {
-            font: '12px "Courier New"', fill: '#88aacc'
-          });
-          this.add.text(panelX + 210, rowY, entry.date, {
-            font: '12px "Courier New"', fill: '#667788'
-          });
+          this.add.text(panelX + 50, rowY, `${entry.score}`, { font: `bold 13px "Courier New"`, fill: isNew ? '#ffffff' : '#ffd700' });
+          this.add.text(panelX + 140, rowY, `Lv ${entry.level}`, { font: '12px "Courier New"', fill: '#88aacc' });
+          this.add.text(panelX + 210, rowY, entry.date, { font: '12px "Courier New"', fill: '#667788' });
         } else {
-          this.add.text(panelX + 50, rowY, '---', {
-            font: '13px "Courier New"', fill: '#334455'
-          });
+          this.add.text(panelX + 50, rowY, '---', { font: '13px "Courier New"', fill: '#334455' });
         }
       }
-
       AM.playMenuMusic();
     }
 
@@ -573,28 +750,36 @@
       this._level      = this.game.registry.get('currentLevel') || 1;
       this._score      = this.game.registry.get('score')        || 0;
       this._cfg        = LEVELS[this._level - 1];
-
-      this._health       = this._level === 1 ? 3 : (this.game.registry.get('health') || 3);
-      this._collected    = 0;
-      this._timeLeft     = this._cfg.timer;
-      this._shieldActive = false;
-      this._vacuumActive = false;
-      this._shieldTimer  = 0;
-      this._vacuumTimer  = 0;
+      this._health     = this._level === 1 ? 3 : (this.game.registry.get('health') || 3);
+      this._collected  = 0;
+      this._timeLeft   = this._cfg.timer;
+      // Power-ups
+      this._shieldActive = false; this._shieldTimer = 0;
+      this._vacuumActive = false; this._vacuumTimer = 0;
+      this._speedActive  = false; this._speedTimer  = 0;
+      this._freezeActive = false; this._freezeTimer = 0;
+      // State
       this._hitCooldown  = 0;
       this._paused       = false;
       this._flameTick    = 0;
       this._frameCount   = 0;
       this._gameEnded    = false;
-      this._introComplete = false;  // blocks input/timer until intro card finishes
-
-      // Combo tracking
+      this._introComplete = false;
+      // Combo
       this._comboTimes  = [];
       this._comboActive = false;
       this._comboTimer  = 0;
-
       // Shooting
-      this._fireTimer = 0;  // seconds until next shot is allowed
+      this._fireTimer = 0;
+      // Dash
+      this._dashCooldown = 0;
+      // Boss
+      this._bossExtra = null;
+      // Touch
+      this._joyId     = null;
+      this._joyBase   = null;
+      this._joyDelta  = { x: 0, y: 0 };
+      this._activePointers = new Map();
     }
 
     preload() { buildTextures(this); }
@@ -605,31 +790,30 @@
 
       buildStarfield(this, true);
 
-      // Per-frame FX layer (flame, pulses, glints, vacuum ring, bullet tails)
-      this._fxGfx = this.add.graphics().setDepth(10);
-
-      // Off-screen enemy indicator layer (above world, below HUD)
+      this._fxGfx        = this.add.graphics().setDepth(10);
       this._indicatorGfx = this.add.graphics().setDepth(85);
+      this._touchGfx     = this.add.graphics().setDepth(195);
 
       // ── Player ─────────────────────────────────────────────────────────────
       this._player = this.physics.add.image(width/2, height/2, 'ship')
         .setDepth(20).setCollideWorldBounds(false).setDrag(130).setMaxVelocity(290);
       this._player.setSize(34, 40);
 
-      // Thruster particle emitter
       this._thruster = this.add.particles(0, 0, 'particle', {
         lifespan: 200, speed: { min:35, max:80 },
         scale: { start:0.85, end:0 }, alpha: { start:0.8, end:0 },
         tint: [0xff8800, 0xff4400, 0xffdd00], blendMode: 'ADD', emitting: false
       }).setDepth(18);
 
-      // ── Bullets ────────────────────────────────────────────────────────────
+      // ── Player Bullets ─────────────────────────────────────────────────────
       this._bullets = this.physics.add.group();
-      // Destroy bullets that hit world bounds
       this.physics.world.on('worldbounds', (body) => {
         const go = body.gameObject;
-        if (go && go.active && go.texture && go.texture.key === 'bullet') go.destroy();
+        if (go && go.active && go.texture && (go.texture.key === 'bullet' || go.texture.key === 'enemy_bullet')) go.destroy();
       });
+
+      // ── Enemy Bullets (boss phase 2) ───────────────────────────────────────
+      this._enemyBullets = this.physics.add.group();
 
       // ── Debris ─────────────────────────────────────────────────────────────
       this._debrisGroup = this.physics.add.group();
@@ -638,9 +822,7 @@
         this._spawnDebrisPiece(
           Phaser.Math.Between(60, width - 60),
           Phaser.Math.Between(100, height - 60),
-          Math.random() < 0.7,  // 70% large
-          i % 6,
-          i % 4 === 0          // every 4th gets a glint
+          Math.random() < 0.7, i % 6, i % 4 === 0
         );
       }
 
@@ -649,24 +831,36 @@
       this._satExtras = [];
       for (let i = 0; i < this._cfg.enemies; i++) this._spawnSatellite(i);
 
+      // ── Boss (level 5) ─────────────────────────────────────────────────────
+      this._bossGroup = this.physics.add.group();
+
       // ── Power-ups ──────────────────────────────────────────────────────────
       this._powerupGroup   = this.physics.add.staticGroup();
       this._powerupBobData = [];
-      const puTypes = ['powerup_shield', 'powerup_vacuum'];
-      for (let i = 0; i < this._cfg.powerups; i++) this._spawnPowerup(puTypes[i % 2]);
+      const puPools = [
+        ['powerup_shield','powerup_vacuum'],
+        ['powerup_shield','powerup_vacuum','powerup_speed'],
+        ['powerup_shield','powerup_vacuum','powerup_speed','powerup_freeze'],
+        ['powerup_shield','powerup_vacuum','powerup_speed','powerup_freeze','powerup_emp'],
+        ['powerup_shield','powerup_vacuum','powerup_speed','powerup_freeze','powerup_emp'],
+      ];
+      const pool = [...puPools[this._level - 1]].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < this._cfg.powerups; i++) this._spawnPowerup(pool[i % pool.length]);
       this._orbitAngle = 0;
 
-      // Shield FX graphics layer
       this._shieldFxGfx = this.add.graphics().setDepth(19);
 
       // ── Physics overlaps / colliders ──────────────────────────────────────
-      this.physics.add.overlap(this._player,  this._debrisGroup,  this._collectDebris,  null, this);
-      this.physics.add.collider(this._satGroup, this._debrisGroup, this._scatterDebris, null, this);
-      this.physics.add.collider(this._player,  this._satGroup,    this._playerHit,     null, this);
-      this.physics.add.overlap(this._player,   this._powerupGroup,this._collectPowerup, null, this);
-      this.physics.add.overlap(this._bullets,  this._satGroup,    this._bulletHitSat,  null, this);
+      this.physics.add.overlap(this._player,      this._debrisGroup,   this._collectDebris,          null, this);
+      this.physics.add.collider(this._satGroup,   this._debrisGroup,   this._scatterDebris,          null, this);
+      this.physics.add.collider(this._player,     this._satGroup,      this._playerHit,              null, this);
+      this.physics.add.collider(this._player,     this._bossGroup,     this._playerHitByBoss,        null, this);
+      this.physics.add.overlap(this._player,      this._powerupGroup,  this._collectPowerup,         null, this);
+      this.physics.add.overlap(this._bullets,     this._satGroup,      this._bulletHitSat,           null, this);
+      this.physics.add.overlap(this._bullets,     this._bossGroup,     this._bulletHitBoss,          null, this);
+      this.physics.add.overlap(this._player,      this._enemyBullets,  this._playerHitByEnemyBullet, null, this);
 
-      // ── Input ──────────────────────────────────────────────────────────────
+      // ── Keyboard Input ─────────────────────────────────────────────────────
       this._cursors  = this.input.keyboard.createCursorKeys();
       this._wasd     = this.input.keyboard.addKeys({
         up: Phaser.Input.Keyboard.KeyCodes.W, down: Phaser.Input.Keyboard.KeyCodes.S,
@@ -675,25 +869,57 @@
       this._keyP     = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
       this._keyESC   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
       this._spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+      this._shiftKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
+
+      // ── Touch / Pointer Input ──────────────────────────────────────────────
+      this._FIRE_BTN = { x: width * 0.80, y: height * 0.82, r: 42 };
+      this._DASH_BTN = { x: width * 0.93, y: height * 0.68, r: 30 };
+
+      this.input.on('pointerdown', (ptr) => {
+        this._activePointers.set(ptr.id, { cx: ptr.x, cy: ptr.y });
+        if (ptr.x < width * 0.52) {
+          if (this._joyId === null) {
+            this._joyId = ptr.id;
+            this._joyBase = { x: ptr.x, y: ptr.y };
+            this._joyDelta = { x: 0, y: 0 };
+          }
+        } else {
+          const dd = Math.hypot(ptr.x - this._DASH_BTN.x, ptr.y - this._DASH_BTN.y);
+          if (dd < this._DASH_BTN.r + 22) this._tryDash();
+        }
+      });
+      this.input.on('pointermove', (ptr) => {
+        const data = this._activePointers.get(ptr.id);
+        if (data) { data.cx = ptr.x; data.cy = ptr.y; }
+        if (ptr.id === this._joyId && this._joyBase) {
+          const JR = 65;
+          let dx = ptr.x - this._joyBase.x, dy = ptr.y - this._joyBase.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d > JR) { dx *= JR / d; dy *= JR / d; }
+          this._joyDelta.x = dx / JR; this._joyDelta.y = dy / JR;
+        }
+      });
+      this.input.on('pointerup', (ptr) => {
+        this._activePointers.delete(ptr.id);
+        if (ptr.id === this._joyId) {
+          this._joyId = null; this._joyBase = null; this._joyDelta = { x: 0, y: 0 };
+        }
+      });
 
       // ── HUD ────────────────────────────────────────────────────────────────
       this._buildHUD();
 
-      // ── Pause overlay ──────────────────────────────────────────────────────
-      this._pauseOverlay = this.add.container(width/2, height/2).setDepth(100).setVisible(false);
-      const pauseBg  = this.add.rectangle(0, 0, 340, 120, 0x000033, 0.88).setStrokeStyle(2, 0x4466ff);
-      const pauseTxt = this.add.text(0, -14, 'PAUSED', { font:'bold 44px "Courier New"', fill:'#ffffff', stroke:'#003399', strokeThickness:4 }).setOrigin(0.5);
-      const pauseSub = this.add.text(0, 32, 'Press P or ESC to resume', { font:'16px "Courier New"', fill:'#aabbdd' }).setOrigin(0.5);
-      this._pauseOverlay.add([pauseBg, pauseTxt, pauseSub]);
+      // ── Pause Overlay (with buttons) ───────────────────────────────────────
+      this._buildPauseOverlay();
 
-      // Controls reminder (fades out after 5 s)
-      this._controlsTxt = this.add.text(10, height - 22, 'WASD / Arrows  •  SPACE to shoot', {
-        font: '12px "Courier New"', fill: '#6688aa', backgroundColor: '#00001188', padding: { x:6, y:3 }
+      // Controls reminder fades out
+      this._controlsTxt = this.add.text(10, height - 22,
+        'WASD/Arrows move  •  SPACE shoot  •  SHIFT dash  •  P pause', {
+        font: '11px "Courier New"', fill: '#6688aa',
+        backgroundColor: '#00001188', padding: { x:6, y:3 }
       }).setDepth(90).setAlpha(0.85);
-      this.tweens.add({ targets: this._controlsTxt, alpha: 0, delay: 5000, duration: 1200 });
+      this.tweens.add({ targets: this._controlsTxt, alpha: 0, delay: 6000, duration: 1200 });
 
-      // NOTE: game timer is started after the intro card fades out (_startGameTimer)
-      // Show the level intro card
       this._showIntroCard();
     }
 
@@ -702,12 +928,10 @@
       this._frameCount++;
       const dt = delta / 1000;
 
-      // Scroll stars
       if (this.starDots) {
         this.starDots.forEach(s => { s.y += s._speed; if (s.y > this.scale.height + 2) s.y = -2; });
       }
 
-      // Pause toggle (allowed during intro)
       if (Phaser.Input.Keyboard.JustDown(this._keyP) || Phaser.Input.Keyboard.JustDown(this._keyESC)) {
         this._paused ? this._resume() : this._pause();
       }
@@ -716,29 +940,28 @@
       this._fxGfx.clear();
       this._shieldFxGfx.clear();
       this._indicatorGfx.clear();
+      this._touchGfx.clear();
 
-      // Block gameplay during intro card
       if (this._introComplete) {
         this._handleInput(dt);
       } else {
-        // Still draw idle flame during intro so ship looks alive
         this._drawFlame(false);
       }
 
       this._updateSatellites(dt);
+      this._updateBoss(dt, time);
       this._updatePowerupFX(time);
       this._updatePowerupTimers(dt);
       if (this._vacuumActive) { this._applyVacuumMagnet(); this._drawVacuumCircle(); }
 
-      // Player hard boundary clamping
+      // Player boundary clamping
       const { width, height } = this.scale;
       const bm = 20;
-      if (this._player.x < bm)         { this._player.x = bm;         this._player.body.velocity.x = 0; }
-      if (this._player.x > width - bm)  { this._player.x = width - bm; this._player.body.velocity.x = 0; }
-      if (this._player.y < bm)          { this._player.y = bm;         this._player.body.velocity.y = 0; }
-      if (this._player.y > height - bm) { this._player.y = height - bm;this._player.body.velocity.y = 0; }
+      if (this._player.x < bm)        { this._player.x = bm;        this._player.body.velocity.x = 0; }
+      if (this._player.x > width - bm) { this._player.x = width-bm;  this._player.body.velocity.x = 0; }
+      if (this._player.y < bm)        { this._player.y = bm;        this._player.body.velocity.y = 0; }
+      if (this._player.y > height - bm){ this._player.y = height-bm; this._player.body.velocity.y = 0; }
 
-      // Debris and enemies still wrap
       this._debrisGroup.getChildren().forEach(d => this.physics.world.wrap(d, 22));
       this._satGroup.getChildren().forEach(s => this.physics.world.wrap(s, 23));
 
@@ -747,7 +970,8 @@
         if (!ext.sprite.active) return false;
         const dx = this._player.x - ext.sprite.x, dy = this._player.y - ext.sprite.y;
         return Math.sqrt(dx*dx + dy*dy) < 180;
-      });
+      }) || (this._bossExtra && this._bossExtra.sprite.active &&
+        Math.hypot(this._player.x - this._bossExtra.sprite.x, this._player.y - this._bossExtra.sprite.y) < 220);
       if (dangerClose) {
         const wa = 0.2 + 0.6 * (0.5 + 0.5 * Math.sin(time * 0.006));
         this._fxGfx.lineStyle(2, 0xff0000, wa);
@@ -762,10 +986,36 @@
         this._shieldFxGfx.fillCircle(this._player.x, this._player.y, 38);
       }
 
+      // Freeze overlay on enemies
+      if (this._freezeActive) {
+        this._satExtras.forEach(ext => {
+          if (!ext.sprite.active) return;
+          this._fxGfx.fillStyle(0x88ddff, 0.22);
+          this._fxGfx.fillCircle(ext.sprite.x, ext.sprite.y, 28);
+        });
+        if (this._bossExtra && this._bossExtra.sprite.active) {
+          this._fxGfx.fillStyle(0x88ddff, 0.28);
+          this._fxGfx.fillCircle(this._bossExtra.sprite.x, this._bossExtra.sprite.y, 50);
+        }
+      }
+
+      // Dash cooldown ring around player
+      if (this._dashCooldown > 0) {
+        const readyFrac = 1 - this._dashCooldown / DASH_COOLDOWN_MAX;
+        this._fxGfx.lineStyle(1.5, 0x444444, 0.35);
+        this._fxGfx.strokeCircle(this._player.x, this._player.y, 30);
+        this._fxGfx.lineStyle(2, 0xffff44, 0.75);
+        this._fxGfx.beginPath();
+        this._fxGfx.arc(this._player.x, this._player.y, 30, -Math.PI / 2, -Math.PI / 2 + readyFrac * Math.PI * 2, false, 0.02);
+        this._fxGfx.strokePath();
+      }
+
+      this._drawDebrisTrails();
       this._drawGlints(time);
       this._drawSatPulses(time);
       this._drawBulletTails();
       this._drawIndicators();
+      this._drawTouchUI();
 
       // Hit cooldown flash
       if (this._hitCooldown > 0) {
@@ -780,7 +1030,6 @@
     }
 
     // ── LEVEL INTRO CARD ──────────────────────────────────────────────────────
-    /** Shows the 2.2-second intro overlay and then starts the game timer. */
     _showIntroCard() {
       const { width, height } = this.scale;
       const overlay = this.add.rectangle(width/2, height/2, width, height, 0x000022, 0.85).setDepth(200).setAlpha(0);
@@ -789,18 +1038,18 @@
         stroke: '#003366', strokeThickness: 5,
         shadow: { color: '#00aaff', blur: 20, fill: true }
       }).setDepth(201).setOrigin(0.5).setAlpha(0);
+      const bossWarn = this._cfg.hasBoss ? '  •  BOSS FIGHT!' : '';
       const infoTxt = this.add.text(width/2, height/2 + 14,
-        `Collect ${this._cfg.debris} debris  —  ${this._cfg.timer} seconds  —  ${this._cfg.enemies} enemies`, {
-        font: '20px "Courier New"', fill: '#ffffff'
+        `Collect ${this._cfg.debris} debris  —  ${this._cfg.timer}s  —  ${this._cfg.enemies} enemies${bossWarn}`, {
+        font: '19px "Courier New"', fill: '#ffffff'
       }).setDepth(201).setOrigin(0.5).setAlpha(0);
-      const ctrlTxt = this.add.text(width/2, height/2 + 54, 'SPACE to shoot  •  WASD / Arrows to move', {
-        font: '15px "Courier New"', fill: '#888888'
+      const ctrlTxt = this.add.text(width/2, height/2 + 56, 'SPACE shoot  •  SHIFT dash  •  WASD/Arrows move', {
+        font: '14px "Courier New"', fill: '#888888'
       }).setDepth(201).setOrigin(0.5).setAlpha(0);
 
       const items = [overlay, lvlTxt, infoTxt, ctrlTxt];
       AM.playIntroSound();
 
-      // Fade in 0.3s → hold 1.6s → fade out 0.3s
       this.tweens.add({
         targets: items, alpha: 1, duration: 300, ease: 'Linear',
         onComplete: () => {
@@ -811,6 +1060,9 @@
                 items.forEach(i => i.destroy());
                 this._introComplete = true;
                 this._startGameTimer();
+                if (this._cfg.hasBoss) {
+                  this.time.delayedCall(2000, () => this._spawnBoss(), [], this);
+                }
               }
             });
           });
@@ -818,7 +1070,6 @@
       });
     }
 
-    /** Creates the countdown timer event. Called once after the intro finishes. */
     _startGameTimer() {
       this._gameTimer = this.time.addEvent({
         delay: 1000, callback: this._tickTimer,
@@ -826,7 +1077,7 @@
       });
     }
 
-    // ── INPUT & SHOOTING ──────────────────────────────────────────────────────
+    // ── INPUT, SHOOTING & DASH ────────────────────────────────────────────────
     _handleInput(dt) {
       const thrust = 350;
       const up    = this._cursors.up.isDown    || this._wasd.up.isDown;
@@ -840,8 +1091,13 @@
       if (left)  vx = -1;
       if (right) vx =  1;
       if (vx !== 0 && vy !== 0) { vx *= 0.707; vy *= 0.707; }
-      const moving = vx !== 0 || vy !== 0;
 
+      // Touch joystick overrides keyboard
+      if (this._joyBase && (Math.abs(this._joyDelta.x) > 0.08 || Math.abs(this._joyDelta.y) > 0.08)) {
+        vx = this._joyDelta.x; vy = this._joyDelta.y;
+      }
+
+      const moving = vx !== 0 || vy !== 0;
       if (moving) {
         this._player.setAcceleration(vx * thrust, vy * thrust);
         const targetRot = Math.atan2(vy, vx) + Math.PI / 2;
@@ -857,61 +1113,67 @@
 
       this._drawFlame(moving);
 
-      // Shooting — spacebar, rate-limited, max 6 on screen
+      // Shooting — spacebar or touch fire zone
       this._fireTimer -= dt;
-      if (this._spaceKey.isDown && this._fireTimer <= 0 && this._bullets.getChildren().length < 6) {
+      const touchFiring = [...this._activePointers.values()].some(p => p.cx >= this.scale.width * 0.52 &&
+        Math.hypot(p.cx - this._FIRE_BTN.x, p.cy - this._FIRE_BTN.y) < this._FIRE_BTN.r + 20);
+      if ((this._spaceKey.isDown || touchFiring) && this._fireTimer <= 0 && this._bullets.getChildren().length < 6) {
         this._fireProjectile();
         this._fireTimer = 0.35;
       }
+
+      // Dash — shift key
+      this._dashCooldown = Math.max(0, this._dashCooldown - dt);
+      if (Phaser.Input.Keyboard.JustDown(this._shiftKey)) this._tryDash();
     }
 
-    /** Fire one laser bolt from the ship nose in the ship's facing direction. */
+    _tryDash() {
+      if (this._dashCooldown > 0 || !this._introComplete || this._gameEnded) return;
+      const rot = this._player.rotation;
+      const dashPower = 580;
+      this._player.setVelocity(
+        this._player.body.velocity.x + Math.sin(rot) * dashPower,
+        this._player.body.velocity.y - Math.cos(rot) * dashPower
+      );
+      this._dashCooldown = DASH_COOLDOWN_MAX;
+      AM.playDashSound();
+      this.cameras.main.shake(70, 0.003);
+      this._player.setTint(0xffffff);
+      this.time.delayedCall(90, () => { if (this._player.active) this._updatePlayerTint(); });
+    }
+
     _fireProjectile() {
       const rot = this._player.rotation;
-      // Nose of ship is at local (0, -22) → world: (px + sin(rot)*22, py - cos(rot)*22)
       const spawnX = this._player.x + Math.sin(rot) * 22;
       const spawnY = this._player.y - Math.cos(rot) * 22;
-
       const bullet = this._bullets.create(spawnX, spawnY, 'bullet');
-      bullet.setDepth(17).setRotation(rot);
-      bullet.setCollideWorldBounds(true);
+      bullet.setDepth(17).setRotation(rot).setCollideWorldBounds(true);
       bullet.body.onWorldBounds = true;
       bullet.body.setSize(8, 16);
-
-      // Velocity in ship facing direction: local -y → world (sin(rot), -cos(rot))
       const speed = 520;
       bullet.setVelocity(Math.sin(rot) * speed, -Math.cos(rot) * speed);
-
       AM.playShootSound();
     }
 
     // ── FLAME DRAWING ─────────────────────────────────────────────────────────
     _drawFlame(moving) {
       this._flameTick++;
-      const px  = this._player.x, py = this._player.y, rot = this._player.rotation;
-
-      // Engine nozzle at local (0, +23) — bottom of fuselage
-      // Local +y → world: (-sin(rot), +cos(rot))
-      const nozzleX = px - Math.sin(rot) * 23;
-      const nozzleY = py + Math.cos(rot) * 23;
-      // Flame extends in local +y direction → world angle: rot + π/2
+      const px = this._player.x, py = this._player.y, rot = this._player.rotation;
+      const nozzleX = px - Math.sin(rot) * 23, nozzleY = py + Math.cos(rot) * 23;
       const flameDir = rot + Math.PI / 2;
-
-      // Two engine ports side by side (local x-axis = world (cos(rot), sin(rot)))
       const perpCos = Math.cos(rot), perpSin = Math.sin(rot);
       const portOff = 3;
       const ports = [
         { x: nozzleX - perpCos * portOff, y: nozzleY - perpSin * portOff },
         { x: nozzleX + perpCos * portOff, y: nozzleY + perpSin * portOff },
       ];
-
-      const isBoost = this._vacuumActive;
+      const isBoost = this._vacuumActive || this._speedActive;
       ports.forEach(port => {
         if (moving) {
           const fh = isBoost ? 48 : 28, wm = isBoost ? 1.3 : 1.0;
-          this._drawFlameEllipse(port.x, port.y, flameDir, 5 * wm, fh * 0.28, 0xff6600, 0.9);
-          this._drawFlameEllipse(port.x, port.y, flameDir, 3.5 * wm, fh * 0.60, 0xffaa00, 0.75);
-          this._drawFlameEllipse(port.x, port.y, flameDir, 2.0 * wm, fh * 0.88, 0xffff00, 0.60);
+          this._drawFlameEllipse(port.x, port.y, flameDir, 5*wm, fh*0.28, 0xff6600, 0.9);
+          this._drawFlameEllipse(port.x, port.y, flameDir, 3.5*wm, fh*0.60, 0xffaa00, 0.75);
+          this._drawFlameEllipse(port.x, port.y, flameDir, 2.0*wm, fh*0.88, 0xffff00, 0.60);
           if (isBoost) this._drawFlameEllipse(port.x, port.y, flameDir, 1.5, fh, 0x00aaff, 0.50);
         } else {
           const idleH = (this._flameTick % 2 === 0) ? 5 : 7;
@@ -933,19 +1195,33 @@
       this._fxGfx.fillPoints(pts, true);
     }
 
-    /** Draw glowing tails behind active bullets on the _fxGfx layer. */
     _drawBulletTails() {
       this._bullets.getChildren().forEach(b => {
         if (!b.active) return;
         const rot = b.rotation;
-        // Tail dots extend behind bullet: local +y direction = engine rear
         for (let i = 0; i < 3; i++) {
-          const dist  = (i + 1) * 5;
-          const alpha = 0.5 - i * 0.15;
-          const tx = b.x - Math.sin(rot) * dist;
-          const ty = b.y + Math.cos(rot) * dist;
+          const dist = (i + 1) * 5, alpha = 0.5 - i * 0.15;
+          const tx = b.x - Math.sin(rot) * dist, ty = b.y + Math.cos(rot) * dist;
           this._fxGfx.fillStyle(0x00ffff, alpha);
           this._fxGfx.fillCircle(tx, ty, 2);
+        }
+      });
+    }
+
+    // ── DEBRIS PARTICLE TRAILS ────────────────────────────────────────────────
+    _drawDebrisTrails() {
+      this._debrisGroup.getChildren().forEach(d => {
+        if (!d.active || !d.body) return;
+        const vx = d.body.velocity.x, vy = d.body.velocity.y;
+        const speed = Math.sqrt(vx*vx + vy*vy);
+        if (speed < 12) return;
+        const nx = -vx / speed, ny = -vy / speed;
+        for (let i = 1; i <= 4; i++) {
+          const alpha = 0.35 - i * 0.07;
+          const radius = 2.8 - i * 0.5;
+          if (radius <= 0) break;
+          this._fxGfx.fillStyle(0xaaaaaa, alpha);
+          this._fxGfx.fillCircle(d.x + nx * i * 5, d.y + ny * i * 5, radius);
         }
       });
     }
@@ -954,32 +1230,24 @@
     _bulletHitSat(bullet, satellite) {
       if (!bullet.active || !satellite.active) return;
       bullet.destroy();
-
       const ext = this._satExtras.find(e => e.sprite === satellite);
       if (!ext) return;
-
       ext.hp--;
       AM.playHitSound();
-
-      // White flash for ~2 frames
       satellite.setTint(0xffffff);
       this.time.delayedCall(33, () => { if (satellite.active) satellite.clearTint(); });
-
       if (ext.hp <= 0) {
-        this._spawnExplosion(satellite.x, satellite.y);
+        this._spawnExplosion(satellite.x, satellite.y, 10);
         AM.playEnemyDestroySound();
         this._score += 50;
-
         const pop = this.add.text(satellite.x, satellite.y - 20, '+50', {
           font: 'bold 20px "Courier New"', fill: '#ffdd44',
           shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
         }).setDepth(50).setOrigin(0.5);
         this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 800, onComplete: () => pop.destroy() });
-
+        this.cameras.main.shake(100, 0.004);
         this._satExtras = this._satExtras.filter(e => e.sprite !== satellite);
         satellite.destroy();
-
-        // Schedule respawn if cap not already reached
         const activeCount = this._satExtras.filter(e => e.sprite.active).length;
         if (activeCount < this._cfg.enemyCap) {
           this.time.delayedCall(this._cfg.respawnDelay, this._respawnEnemy, [], this);
@@ -987,36 +1255,92 @@
       }
     }
 
-    /** Spawn 10 particle sparks at (x, y) using plain GameObjects + tweens. */
-    _spawnExplosion(x, y) {
-      const colors = [0xff4400, 0xff8800, 0xffcc00];
-      for (let i = 0; i < 10; i++) {
+    // ── BULLET → BOSS HIT ─────────────────────────────────────────────────────
+    _bulletHitBoss(bullet, bossSprite) {
+      if (!bullet.active || !bossSprite.active) return;
+      bullet.destroy();
+      if (!this._bossExtra) return;
+
+      this._bossExtra.hp--;
+      AM.playBossHitSound();
+      this.cameras.main.shake(90, 0.004);
+
+      bossSprite.setTint(0xffffff);
+      this.time.delayedCall(45, () => { if (bossSprite.active) bossSprite.clearTint(); });
+
+      this._score += 10;
+      const pop = this.add.text(bossSprite.x, bossSprite.y - 30, '+10', {
+        font: 'bold 16px "Courier New"', fill: '#ff8888'
+      }).setDepth(50).setOrigin(0.5);
+      this.tweens.add({ targets: pop, y: pop.y - 28, alpha: 0, duration: 600, onComplete: () => pop.destroy() });
+
+      // Phase 2 trigger at 50% HP
+      if (this._bossExtra.phase === 1 && this._bossExtra.hp <= this._bossExtra.maxHp / 2) {
+        this._bossExtra.phase = 2;
+        this._bossExtra.fireTimer = 1.2;
+        AM.playBossPhase2Sound();
+        this.cameras.main.shake(250, 0.012);
+        const txt = this.add.text(this.scale.width/2, 85, '⚡ BOSS ENRAGED!', {
+          font: 'bold 24px "Courier New"', fill: '#ff4400',
+          stroke: '#000000', strokeThickness: 3
+        }).setDepth(205).setOrigin(0.5).setAlpha(0);
+        this.tweens.add({ targets: txt, alpha: 1, duration: 200, hold: 1400, yoyo: true, onComplete: () => txt.destroy() });
+      }
+
+      if (this._bossExtra.hp <= 0) this._killBoss();
+    }
+
+    _killBoss() {
+      const { sprite } = this._bossExtra;
+      const bx = sprite.x, by = sprite.y;
+
+      this._spawnExplosion(bx, by, 30);
+      const flash = this.add.rectangle(this.scale.width/2, this.scale.height/2, this.scale.width, this.scale.height, 0xffffff, 0.65).setDepth(300);
+      this.tweens.add({ targets: flash, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
+
+      this.cameras.main.shake(420, 0.018);
+      AM.playBossDeathSound();
+
+      this._score += 500;
+      const pop = this.add.text(bx, by - 50, '+500  BOSS DESTROYED!', {
+        font: 'bold 28px "Courier New"', fill: '#ffdd44',
+        stroke: '#000000', strokeThickness: 4,
+        shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
+      }).setDepth(70).setOrigin(0.5);
+      this.tweens.add({ targets: pop, y: pop.y - 75, alpha: 0, duration: 1600, onComplete: () => pop.destroy() });
+
+      sprite.destroy();
+      this._bossExtra = null;
+      // Update HP bar immediately
+      if (this._bossHpBarFg) { this._bossHpBarFg.clear(); this._bossHpBarFg.setAlpha(0); }
+      if (this._bossHpBarBg) this._bossHpBarBg.setAlpha(0);
+      if (this._bossHpLbl)   this._bossHpLbl.setAlpha(0);
+    }
+
+    _spawnExplosion(x, y, count = 10) {
+      const colors = [0xff4400, 0xff8800, 0xffcc00, 0xff0000, 0xffffff];
+      for (let i = 0; i < count; i++) {
         const color = colors[Math.floor(Math.random() * colors.length)];
-        const r     = 3 + Math.random() * 2;
-        const ang   = Math.random() * Math.PI * 2;
-        const speed = 60 + Math.random() * 100;
-        const dot   = this.add.circle(x, y, r, color).setDepth(30);
+        const r = 3 + Math.random() * (count > 10 ? 5 : 2);
+        const ang = Math.random() * Math.PI * 2;
+        const speed = 60 + Math.random() * (count > 10 ? 180 : 100);
+        const dot = this.add.circle(x, y, r, color).setDepth(30);
         this.tweens.add({
-          targets: dot,
-          x: x + Math.cos(ang) * speed * 0.6,
-          y: y + Math.sin(ang) * speed * 0.6,
-          alpha: 0, scaleX: 0, scaleY: 0,
-          duration: 600, ease: 'Power2.easeOut',
+          targets: dot, x: x + Math.cos(ang)*speed*0.8, y: y + Math.sin(ang)*speed*0.8,
+          alpha: 0, scaleX: 0, scaleY: 0, duration: count > 10 ? 900 : 600, ease: 'Power2.easeOut',
           onComplete: () => dot.destroy()
         });
       }
     }
 
     // ── ENEMY RESPAWNING ──────────────────────────────────────────────────────
-    /** Called on a timer after an enemy is destroyed. Spawns a new satellite at a screen edge. */
     _respawnEnemy() {
       if (this._gameEnded) return;
       const activeCount = this._satExtras.filter(e => e.sprite.active).length;
       if (activeCount >= this._cfg.enemyCap) return;
 
       const { width, height } = this.scale;
-      const margin = 30;
-      const edge   = Math.floor(Math.random() * 4);
+      const margin = 30, edge = Math.floor(Math.random() * 4);
       let sx, sy;
       switch (edge) {
         case 0: sx = Phaser.Math.Between(0, width); sy = -margin; break;
@@ -1024,99 +1348,235 @@
         case 2: sx = Phaser.Math.Between(0, width); sy = height + margin; break;
         default: sx = -margin; sy = Phaser.Math.Between(50, height); break;
       }
-
-      const sat = this._satGroup.create(sx, sy, 'satellite')
-        .setBounce(0.55).setCollideWorldBounds(false)
-        .setMaxVelocity(this._cfg.enemySpeed * 1.3)
-        .setAngularVelocity(Phaser.Math.Between(40, 90))
-        .setDepth(16);
-      sat.setSize(40, 40);
-      this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0, hp: this._cfg.enemyHp });
+      const typePool = this._cfg.enemyTypes;
+      const type = typePool[Math.floor(Math.random() * typePool.length)];
+      this._spawnSatelliteAt(sx, sy, type);
       this._showSpawnWarning(sx, sy);
     }
 
-    // ── SATELLITE AI + FX ─────────────────────────────────────────────────────
+    // ── SATELLITE SPAWNING ────────────────────────────────────────────────────
     _spawnSatellite(index) {
       const { width, height } = this.scale;
       const corners = [[60,60],[width-60,60],[60,height-60],[width-60,height-60],[width/2,50]];
       const [sx, sy] = corners[index % corners.length];
-      const sat = this._satGroup.create(sx, sy, 'satellite')
+      const type = this._cfg.enemyTypes[index % this._cfg.enemyTypes.length];
+      this._spawnSatelliteAt(sx, sy, type, index);
+    }
+
+    _spawnSatelliteAt(x, y, type = 'seeker', index = 0) {
+      const textureKey = type === 'bomber' ? 'bomber' : type === 'patrol' ? 'patrol' : 'satellite';
+      const sat = this._satGroup.create(x, y, textureKey)
         .setBounce(0.55).setCollideWorldBounds(false)
         .setMaxVelocity(this._cfg.enemySpeed * 1.3)
         .setAngularVelocity(Phaser.Math.Between(40, 90))
         .setDepth(16);
       sat.setSize(40, 40);
-      this._satExtras.push({ sprite: sat, pulsePhase: Phaser.Math.FloatBetween(0, Math.PI*2), flickerCount: 0, hp: this._cfg.enemyHp });
-      if (this._level >= 2) this._showSpawnWarning(sx, sy);
+
+      const ext = {
+        sprite: sat, type,
+        pulsePhase: Phaser.Math.FloatBetween(0, Math.PI * 2),
+        flickerCount: 0,
+        hp: this._cfg.enemyHp,
+      };
+
+      if (type === 'patrol') {
+        const { width, height } = this.scale;
+        ext.patrolCx = Phaser.Math.Clamp(x + Phaser.Math.Between(-120, 120), 80, width - 80);
+        ext.patrolCy = Phaser.Math.Clamp(y + Phaser.Math.Between(-80, 80), 80, height - 80);
+        ext.patrolAngle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        ext.patrolRadius = Phaser.Math.Between(65, 130);
+      }
+      if (type === 'bomber') {
+        ext.bomberTimer = Phaser.Math.FloatBetween(3.5, 6.5);
+      }
+
+      this._satExtras.push(ext);
+      if (this._level >= 2 && index === 0) this._showSpawnWarning(x, y);
     }
 
+    // ── BOSS ──────────────────────────────────────────────────────────────────
+    _spawnBoss() {
+      if (this._gameEnded) return;
+      const { width, height } = this.scale;
+      const boss = this._bossGroup.create(width / 2, height / 2, 'boss')
+        .setDepth(17).setMaxVelocity(120).setCollideWorldBounds(true);
+      boss.setSize(62, 62);
+
+      this._bossExtra = { sprite: boss, hp: this._cfg.bossHp, maxHp: this._cfg.bossHp, phase: 1, fireTimer: 3.0, stunTimer: 0 };
+
+      boss.setScale(0.1);
+      this.tweens.add({ targets: boss, scaleX: 1, scaleY: 1, duration: 650, ease: 'Back.easeOut' });
+
+      const txt = this.add.text(width/2, height/2 - 80, '⚠ BOSS APPEARS!', {
+        font: 'bold 34px "Courier New"', fill: '#ff0000',
+        stroke: '#440000', strokeThickness: 4,
+        shadow: { color: '#ff0000', blur: 22, fill: true }
+      }).setDepth(205).setOrigin(0.5).setAlpha(0);
+      this.tweens.add({ targets: txt, alpha: 1, duration: 300, hold: 1100, yoyo: true, onComplete: () => txt.destroy() });
+
+      this.cameras.main.shake(300, 0.012);
+      AM.playBossPhase2Sound();
+
+      // Show HP bar
+      if (this._bossHpBarBg) this._bossHpBarBg.setAlpha(1);
+      if (this._bossHpLbl)   this._bossHpLbl.setAlpha(1);
+    }
+
+    _updateBoss(dt, time) {
+      if (!this._bossExtra || !this._bossExtra.sprite.active) return;
+      if (!this._introComplete) return;
+
+      const { sprite, phase } = this._bossExtra;
+
+      // Stun
+      if (this._bossExtra.stunTimer > 0) {
+        this._bossExtra.stunTimer -= dt;
+        sprite.setVelocity(0, 0);
+        return;
+      }
+      if (this._freezeActive) return;
+
+      const speed = phase === 1 ? 72 : 115;
+      const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
+      const d  = Math.sqrt(dx*dx + dy*dy) || 1;
+      sprite.setVelocity((dx/d)*speed, (dy/d)*speed);
+      sprite.setAngularVelocity(45);
+
+      // Phase 2: fire at player
+      if (phase === 2) {
+        this._bossExtra.fireTimer -= dt;
+        if (this._bossExtra.fireTimer <= 0) {
+          this._bossFire();
+          this._bossExtra.fireTimer = 2.4;
+        }
+      }
+
+      // Boss glow
+      const bp = 0.5 + 0.5 * Math.sin(time * 0.005);
+      this._fxGfx.lineStyle(3, phase === 2 ? 0xff4400 : 0xff0000, bp * 0.45);
+      this._fxGfx.strokeCircle(sprite.x, sprite.y, 52);
+      this._fxGfx.fillStyle(phase === 2 ? 0xff2200 : 0xff0000, 0.07);
+      this._fxGfx.fillCircle(sprite.x, sprite.y, 52);
+    }
+
+    _bossFire() {
+      if (this._gameEnded || !this._bossExtra) return;
+      const { sprite } = this._bossExtra;
+      const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
+      const d  = Math.sqrt(dx*dx + dy*dy) || 1;
+      const speed = 190;
+      const bolt = this._enemyBullets.create(sprite.x, sprite.y, 'enemy_bullet');
+      bolt.setDepth(17).setCollideWorldBounds(true);
+      bolt.body.onWorldBounds = true;
+      bolt.setVelocity((dx/d)*speed, (dy/d)*speed);
+      AM.playEnemyShootSound();
+      this.time.delayedCall(4500, () => { if (bolt.active) bolt.destroy(); });
+    }
+
+    // ── SATELLITE AI ──────────────────────────────────────────────────────────
     _updateSatellites(dt) {
-      if (!this._introComplete) return; // enemies hold still during intro
+      if (!this._introComplete) return;
       const speed = this._cfg.enemySpeed;
-      this._satExtras.forEach(({ sprite }) => {
-        if (!sprite.active) return;
-        const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
-        const d  = Math.sqrt(dx*dx + dy*dy) || 1;
-        sprite.setVelocity((dx/d)*speed, (dy/d)*speed);
+      const frozenFactor = this._freezeActive ? 0.08 : 1.0;
+
+      this._satExtras.forEach(ext => {
+        if (!ext.sprite.active) return;
+        const { sprite, type } = ext;
+
+        if (type === 'patrol') {
+          ext.patrolAngle += dt * 1.15 * frozenFactor;
+          const { width, height } = this.scale;
+          ext.patrolCx = Phaser.Math.Clamp(ext.patrolCx, 60, width - 60);
+          ext.patrolCy = Phaser.Math.Clamp(ext.patrolCy, 60, height - 60);
+          const targetX = ext.patrolCx + Math.cos(ext.patrolAngle) * ext.patrolRadius;
+          const targetY = ext.patrolCy + Math.sin(ext.patrolAngle) * ext.patrolRadius;
+          const dx = targetX - sprite.x, dy = targetY - sprite.y;
+          const d = Math.sqrt(dx*dx + dy*dy) || 1;
+          sprite.setVelocity((dx/d)*speed*0.78*frozenFactor, (dy/d)*speed*0.78*frozenFactor);
+        } else if (type === 'bomber') {
+          const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
+          const d = Math.sqrt(dx*dx + dy*dy) || 1;
+          sprite.setVelocity((dx/d)*speed*0.60*frozenFactor, (dy/d)*speed*0.60*frozenFactor);
+          if (ext.bomberTimer !== undefined && !this._freezeActive) {
+            ext.bomberTimer -= dt;
+            if (ext.bomberTimer <= 0) {
+              this._dropBomb(sprite.x, sprite.y);
+              ext.bomberTimer = Phaser.Math.FloatBetween(4.0, 7.0);
+            }
+          }
+        } else {
+          const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
+          const d = Math.sqrt(dx*dx + dy*dy) || 1;
+          sprite.setVelocity((dx/d)*speed*frozenFactor, (dy/d)*speed*frozenFactor);
+        }
       });
+    }
+
+    _dropBomb(x, y) {
+      if (this._gameEnded) return;
+      const variant = Math.floor(Math.random() * 6);
+      this._spawnDebrisPiece(x, y, false, variant, false);
+      // Brief orange flash at drop point
+      this._fxGfx.fillStyle(0xff6600, 0.6);
+      this._fxGfx.fillCircle(x, y, 14);
     }
 
     _drawSatPulses(time) {
       this._satExtras.forEach(ext => {
         if (!ext.sprite.active) return;
-        const { sprite, pulsePhase } = ext;
+        const { sprite, pulsePhase, type } = ext;
         const dx = this._player.x - sprite.x, dy = this._player.y - sprite.y;
         const dist2 = Math.sqrt(dx*dx + dy*dy);
         const near  = dist2 < 300;
-        const speed = near ? 3.5 : 1.8;
-        const pulse = 0.8 + 0.55 * Math.sin(time * 0.001 * speed + pulsePhase);
-        const alpha = near ? 0.55 : 0.3;
-        this._fxGfx.fillStyle(near ? 0xff0000 : 0xcc0000, alpha);
+        const speed2 = near ? 3.5 : 1.8;
+        const pulse  = 0.8 + 0.55 * Math.sin(time * 0.001 * speed2 + pulsePhase);
+        const alpha  = near ? 0.55 : 0.3;
+        const baseColor = type === 'bomber' ? (near ? 0xff44cc : 0xaa22aa) :
+                          type === 'patrol' ? (near ? 0x44ff88 : 0x22aa55) :
+                          (near ? 0xff0000 : 0xcc0000);
+        this._fxGfx.fillStyle(baseColor, alpha);
         this._fxGfx.fillCircle(sprite.x, sprite.y, 28 * pulse);
         ext.flickerCount++;
-        if      (ext.flickerCount % 20 === 0)  sprite.setTint(near ? 0xff6666 : 0xff3333);
+        if      (ext.flickerCount % 20 === 0)  sprite.setTint(near ? 0xffaaff : 0xff88ff);
         else if (ext.flickerCount % 20 === 10) sprite.clearTint();
       });
     }
 
     // ── OFF-SCREEN ENEMY INDICATORS ───────────────────────────────────────────
-    /** Draws small red arrows on screen edges pointing toward off-screen or near-edge enemies. */
     _drawIndicators() {
       const { width, height } = this.scale;
       const HUD_H = 50;
       const candidates = [];
 
-      this._satExtras.forEach(ext => {
-        if (!ext.sprite.active) return;
-        const sx = ext.sprite.x, sy = ext.sprite.y;
+      const allEnemySprites = [
+        ...this._satExtras.map(e => e.sprite),
+        ...(this._bossExtra && this._bossExtra.sprite.active ? [this._bossExtra.sprite] : [])
+      ];
+
+      allEnemySprites.forEach(sprite => {
+        if (!sprite.active) return;
+        const sx = sprite.x, sy = sprite.y;
         const offscreen = sx < 0 || sx > width || sy < HUD_H || sy > height;
         const nearEdge  = !offscreen && (sx < 40 || sx > width - 40 || sy < HUD_H + 40 || sy > height - 40);
         if (!offscreen && !nearEdge) return;
-
-        // Nearest edge
         const dL = sx, dR = width - sx, dT = sy - HUD_H, dB = height - sy;
         const minD = Math.min(dL, dR, dT, dB);
-
         let ex, ey, arrowRot;
         if      (minD === dL) { ex = 16;       ey = Phaser.Math.Clamp(sy, HUD_H+14, height-14); arrowRot = Math.PI/2; }
         else if (minD === dR) { ex = width-16; ey = Phaser.Math.Clamp(sy, HUD_H+14, height-14); arrowRot = -Math.PI/2; }
         else if (minD === dT) { ex = Phaser.Math.Clamp(sx, 14, width-14); ey = HUD_H+16; arrowRot = 0; }
         else                  { ex = Phaser.Math.Clamp(sx, 14, width-14); ey = height-16; arrowRot = Math.PI; }
-
         candidates.push({ ex, ey, arrowRot });
       });
 
-      // Deduplicate: skip arrows within 30px on the same side
       const drawn = [];
       candidates.forEach(c => {
         const clash = drawn.some(d =>
-          Math.abs(c.arrowRot - d.arrowRot) < 0.01 &&
-          Math.hypot(c.ex - d.ex, c.ey - d.ey) < 30
+          Math.abs(c.arrowRot - d.arrowRot) < 0.01 && Math.hypot(c.ex - d.ex, c.ey - d.ey) < 30
         );
         if (!clash) drawn.push(c);
       });
 
-      // Draw each arrow: filled triangle + white border, rotated
       drawn.forEach(({ ex, ey, arrowRot }) => {
         const cos = Math.cos(arrowRot), sin = Math.sin(arrowRot);
         const tp = (lx, ly) => ({ x: ex + lx*cos - ly*sin, y: ey + lx*sin + ly*cos });
@@ -1128,14 +1588,73 @@
       });
     }
 
-    // ── DEBRIS ───────────────────────────────────────────────────────────────
-    /** Spawn one debris piece at (x, y). Used both at level start and for split pieces. */
+    // ── TOUCH UI ──────────────────────────────────────────────────────────────
+    _drawTouchUI() {
+      const g = this._touchGfx;
+      const { x: fx, y: fy, r: fr } = this._FIRE_BTN;
+      const { x: dx, y: dy, r: dr } = this._DASH_BTN;
+
+      // Fire button
+      const fireHeld = [...this._activePointers.values()].some(p =>
+        p.cx >= this.scale.width * 0.52 && Math.hypot(p.cx - fx, p.cy - fy) < fr + 20);
+      g.fillStyle(0x00ffff, fireHeld ? 0.35 : 0.10);
+      g.fillCircle(fx, fy, fr);
+      g.lineStyle(2, 0x00ffff, fireHeld ? 0.85 : 0.40);
+      g.strokeCircle(fx, fy, fr);
+      // Bullet icon inside fire button
+      g.fillStyle(0x00ffff, fireHeld ? 0.9 : 0.4);
+      g.fillTriangle(fx, fy - 14, fx - 6, fy + 8, fx + 6, fy + 8);
+      g.fillStyle(0xffffff, fireHeld ? 0.9 : 0.35);
+      g.fillRect(fx - 2, fy - 6, 4, 10);
+
+      // Dash button with cooldown arc
+      const dashReady = this._dashCooldown <= 0;
+      const dashCol = dashReady ? 0xffff00 : 0x666600;
+      g.fillStyle(dashCol, dashReady ? 0.15 : 0.08);
+      g.fillCircle(dx, dy, dr);
+      g.lineStyle(2, dashCol, dashReady ? 0.7 : 0.35);
+      g.strokeCircle(dx, dy, dr);
+      if (!dashReady) {
+        const readyFrac = 1 - this._dashCooldown / DASH_COOLDOWN_MAX;
+        g.lineStyle(2.5, 0xffff44, 0.8);
+        g.beginPath();
+        g.arc(dx, dy, dr, -Math.PI / 2, -Math.PI / 2 + readyFrac * Math.PI * 2, false, 0.02);
+        g.strokePath();
+      }
+      // Lightning bolt icon
+      g.fillStyle(dashCol, dashReady ? 0.8 : 0.3);
+      g.fillPoints([
+        {x:dx+2,y:dy-11},{x:dx-3,y:dy-1},{x:dx+2,y:dy-1},{x:dx-4,y:dy+11},
+        {x:dx+5,y:dy+2}, {x:dx+1,y:dy+2},{x:dx+8,y:dy-11}
+      ], true);
+
+      // Joystick
+      if (this._joyBase) {
+        const JR = 65, stickR = 22;
+        g.fillStyle(0xffffff, 0.08);
+        g.fillCircle(this._joyBase.x, this._joyBase.y, JR);
+        g.lineStyle(1.5, 0xffffff, 0.25);
+        g.strokeCircle(this._joyBase.x, this._joyBase.y, JR);
+        const sx = this._joyBase.x + this._joyDelta.x * JR;
+        const sy = this._joyBase.y + this._joyDelta.y * JR;
+        g.fillStyle(0xffffff, 0.30);
+        g.fillCircle(sx, sy, stickR);
+        g.lineStyle(1.5, 0xffffff, 0.45);
+        g.strokeCircle(sx, sy, stickR);
+      } else {
+        // Hint ring
+        g.fillStyle(0xffffff, 0.04);
+        g.fillCircle(this.scale.width * 0.18, this.scale.height * 0.78, 52);
+        g.lineStyle(1, 0xffffff, 0.12);
+        g.strokeCircle(this.scale.width * 0.18, this.scale.height * 0.78, 52);
+      }
+    }
+
+    // ── DEBRIS ────────────────────────────────────────────────────────────────
     _spawnDebrisPiece(x, y, isLarge, variant, addGlint = false) {
       const piece = this._debrisGroup.create(x, y, `debris_${variant}`);
       piece.setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
-      piece._isLarge = isLarge;
-      piece._pts     = isLarge ? 10 : 5;
-      piece._variant = variant;
+      piece._isLarge = isLarge; piece._pts = isLarge ? 10 : 5; piece._variant = variant;
       if (!isLarge) piece.setScale(0.6);
       const spd = Phaser.Math.Between(18, 62);
       const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
@@ -1157,8 +1676,7 @@
     // ── POWER-UPS ─────────────────────────────────────────────────────────────
     _spawnPowerup(type) {
       const { width, height } = this.scale;
-      const x  = Phaser.Math.Between(60, width - 60);
-      const y  = Phaser.Math.Between(80, height - 80);
+      const x = Phaser.Math.Between(60, width - 60), y = Phaser.Math.Between(80, height - 80);
       const pu = this._powerupGroup.create(x, y, type).setDepth(14);
       this._powerupBobData.push({ sprite: pu, baseY: y, type });
     }
@@ -1169,11 +1687,11 @@
       this._powerupBobData.forEach(d => {
         d.sprite.y = d.baseY + Math.sin(time * 0.002) * 7;
         d.sprite.refreshBody();
-        if (d.type === 'powerup_vacuum' && d.sprite.active) {
+        if ((d.type === 'powerup_vacuum' || d.type === 'powerup_emp') && d.sprite.active) {
           for (let i = 0; i < 4; i++) {
             const ang = this._orbitAngle + (i / 4) * Math.PI * 2;
-            const ox  = d.sprite.x + Math.cos(ang) * 22, oy = d.sprite.y + Math.sin(ang) * 22;
-            this._fxGfx.fillStyle(0xffffff, 0.75);
+            const ox = d.sprite.x + Math.cos(ang) * 22, oy = d.sprite.y + Math.sin(ang) * 22;
+            this._fxGfx.fillStyle(d.type === 'powerup_emp' ? 0xffff44 : 0xffffff, 0.75);
             this._fxGfx.fillCircle(ox, oy, 2.5);
           }
         }
@@ -1192,8 +1710,26 @@
     }
 
     _updatePowerupTimers(dt) {
-      if (this._shieldActive) { this._shieldTimer -= dt; if (this._shieldTimer <= 0) { this._shieldActive = false; this._player.clearTint(); } }
-      if (this._vacuumActive) { this._vacuumTimer -= dt; if (this._vacuumTimer <= 0) { this._vacuumActive = false; this._player.clearTint(); } }
+      if (this._shieldActive) {
+        this._shieldTimer -= dt;
+        if (this._shieldTimer <= 0) { this._shieldActive = false; this._updatePlayerTint(); }
+      }
+      if (this._vacuumActive) {
+        this._vacuumTimer -= dt;
+        if (this._vacuumTimer <= 0) { this._vacuumActive = false; this._updatePlayerTint(); }
+      }
+      if (this._speedActive) {
+        this._speedTimer -= dt;
+        if (this._speedTimer <= 0) {
+          this._speedActive = false;
+          this._player.setMaxVelocity(290);
+          this._updatePlayerTint();
+        }
+      }
+      if (this._freezeActive) {
+        this._freezeTimer -= dt;
+        if (this._freezeTimer <= 0) { this._freezeActive = false; }
+      }
     }
 
     _applyVacuumMagnet() {
@@ -1205,29 +1741,59 @@
       });
     }
 
+    _applyEMP() {
+      // Push all enemies outward
+      const pushForce = 420;
+      this._satExtras.forEach(ext => {
+        if (!ext.sprite.active) return;
+        const dx = ext.sprite.x - this._player.x, dy = ext.sprite.y - this._player.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 1;
+        ext.sprite.setVelocity((dx/d)*pushForce, (dy/d)*pushForce);
+      });
+      if (this._bossExtra && this._bossExtra.sprite.active) {
+        const dx = this._bossExtra.sprite.x - this._player.x;
+        const dy = this._bossExtra.sprite.y - this._player.y;
+        const d  = Math.sqrt(dx*dx + dy*dy) || 1;
+        this._bossExtra.sprite.setVelocity((dx/d)*200, (dy/d)*200);
+        this._bossExtra.stunTimer = 2.2;
+      }
+      // Shockwave ring
+      const ring = this.add.circle(this._player.x, this._player.y, 18, 0xffff00, 0.5).setDepth(45);
+      this.tweens.add({
+        targets: ring, scaleX: 9, scaleY: 9, alpha: 0,
+        duration: 380, ease: 'Power2.easeOut', onComplete: () => ring.destroy()
+      });
+      this.cameras.main.shake(280, 0.012);
+    }
+
+    _updatePlayerTint() {
+      if (this._shieldActive) this._player.setTint(0x44aaff);
+      else if (this._speedActive) this._player.setTint(0x00ff88);
+      else if (this._vacuumActive) this._player.setTint(0xffcc00);
+      else this._player.clearTint();
+    }
+
     // ── COLLISION CALLBACKS ───────────────────────────────────────────────────
     _collectDebris(player, piece) {
       piece.destroy();
       this._glintData = this._glintData.filter(g => g.sprite !== piece);
-
       const pts = (this._comboActive ? 2 : 1) * (piece._pts || 10);
       this._score += pts;
       this._collected++;
       AM.playCollectSound();
-
       const popTxt = this._comboActive ? `+${pts} x2!` : `+${pts}`;
       const pop = this.add.text(piece.x, piece.y - 18, popTxt, {
         font: 'bold 20px "Courier New"', fill: this._comboActive ? '#ffdd00' : '#ffff44',
         shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
       }).setDepth(50).setOrigin(0.5);
       this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 800, onComplete: () => pop.destroy() });
-
       const now = this.time.now;
       this._comboTimes.push(now);
       this._comboTimes = this._comboTimes.filter(t => now - t < 4000);
       if (this._comboTimes.length >= 3 && !this._comboActive) this._activateCombo();
-
-      if (this._collected >= this._cfg.debris) this._endGame(true);
+      if (this._collected >= this._cfg.debris) {
+        if (!this._cfg.hasBoss || !this._bossExtra) this._endGame(true);
+      }
     }
 
     _activateCombo() {
@@ -1238,37 +1804,30 @@
         shadow: { offsetX:2, offsetY:2, color:'#000000', fill:true }
       }).setDepth(60).setOrigin(0.5);
       this.tweens.add({ targets: comboTxt, y: y - 90, alpha: 0, duration: 1800, onComplete: () => comboTxt.destroy() });
+      this.cameras.main.shake(50, 0.002);
     }
 
-    /** Called when enemy hits debris. Large pieces split into 2 smalls; small pieces just scatter. */
     _scatterDebris(satellite, piece) {
       if (!piece.active) return;
-
       if (piece._isLarge) {
-        const origVx  = piece.body.velocity.x, origVy = piece.body.velocity.y;
+        const origVx = piece.body.velocity.x, origVy = piece.body.velocity.y;
         const origAng = Math.atan2(origVy, origVx);
         const origSpd = Math.sqrt(origVx*origVx + origVy*origVy) || 80;
         const px = piece.x, py = piece.y, variant = piece._variant || 0;
-
         piece.destroy();
         this._glintData = this._glintData.filter(g => g.sprite.active);
-
-        // Spawn 2 small pieces diverging at ±60°
         for (let i = 0; i < 2; i++) {
-          const spread  = (i === 0 ? -1 : 1) * Phaser.Math.FloatBetween(Math.PI/5, Math.PI/2.5);
-          const newAng  = origAng + spread;
-          const spd     = origSpd * Phaser.Math.FloatBetween(0.7, 1.3);
-          const small   = this._debrisGroup.create(px, py, `debris_${variant}`);
+          const spread = (i === 0 ? -1 : 1) * Phaser.Math.FloatBetween(Math.PI/5, Math.PI/2.5);
+          const newAng = origAng + spread, spd = origSpd * Phaser.Math.FloatBetween(0.7, 1.3);
+          const small  = this._debrisGroup.create(px, py, `debris_${variant}`);
           small.setScale(0.6).setBounce(0.8).setCollideWorldBounds(false).setDepth(15);
           small.setVelocity(Math.cos(newAng)*spd, Math.sin(newAng)*spd);
           small.setAngularVelocity(Phaser.Math.Between(-50, 50));
           small._isLarge = false; small._pts = 5; small._variant = variant;
         }
       } else {
-        // Small piece: just scatter velocity
         const ang = Phaser.Math.FloatBetween(0, Math.PI*2);
-        const spd = Phaser.Math.Between(70, 160);
-        piece.setVelocity(Math.cos(ang)*spd, Math.sin(ang)*spd);
+        piece.setVelocity(Math.cos(ang)*Phaser.Math.Between(70, 160), Math.sin(ang)*Phaser.Math.Between(70, 160));
       }
     }
 
@@ -1277,9 +1836,33 @@
       this._health--;
       this._hitCooldown = 1.6;
       AM.playHitSound();
+      this.cameras.main.shake(200, 0.009);
+      player.setTint(0xff3300);
+      this.time.delayedCall(55, () => { if (player.active) this._updatePlayerTint(); });
+      if (this._health <= 0) this._endGame(false);
+    }
+
+    _playerHitByBoss(player, bossSprite) {
+      if (this._shieldActive || this._hitCooldown > 0) return;
+      this._health--;
+      this._hitCooldown = 1.8;
+      AM.playHitSound();
+      this.cameras.main.shake(250, 0.011);
+      player.setTint(0xff3300);
+      this.time.delayedCall(55, () => { if (player.active) this._updatePlayerTint(); });
+      if (this._health <= 0) this._endGame(false);
+    }
+
+    _playerHitByEnemyBullet(player, bullet) {
+      if (!bullet.active) return;
+      bullet.destroy();
+      if (this._shieldActive || this._hitCooldown > 0) return;
+      this._health--;
+      this._hitCooldown = 1.6;
+      AM.playHitSound();
       this.cameras.main.shake(200, 0.008);
       player.setTint(0xff3300);
-      this.time.delayedCall(55, () => { if (player.active) player.clearTint(); });
+      this.time.delayedCall(55, () => { if (player.active) this._updatePlayerTint(); });
       if (this._health <= 0) this._endGame(false);
     }
 
@@ -1287,21 +1870,46 @@
       const type = powerup.texture.key;
       powerup.destroy();
       this._powerupBobData = this._powerupBobData.filter(d => d.sprite.active);
-      if (type === 'powerup_shield') {
-        AM.playPowerUpSound();
-        this._shieldActive = true; this._shieldTimer = 8;
-        player.setTint(0x44aaff); this._showStatusPop('SHIELD ON  8s', 0x44aaff);
-      } else {
-        AM.playRocketBoostSound();
-        this._vacuumActive = true; this._vacuumTimer = 10;
-        player.setTint(0xffcc00); this._showStatusPop('SUPER VACUUM  10s', 0xffcc00);
+
+      switch (type) {
+        case 'powerup_shield':
+          AM.playPowerUpSound();
+          this._shieldActive = true; this._shieldTimer = 8;
+          this._updatePlayerTint();
+          this._showStatusPop('SHIELD ON  8s', 0x44aaff);
+          break;
+        case 'powerup_vacuum':
+          AM.playRocketBoostSound();
+          this._vacuumActive = true; this._vacuumTimer = 10;
+          this._updatePlayerTint();
+          this._showStatusPop('SUPER VACUUM  10s', 0xffcc00);
+          break;
+        case 'powerup_speed':
+          AM.playSpeedSound();
+          this._speedActive = true; this._speedTimer = 8;
+          player.setMaxVelocity(460);
+          this._updatePlayerTint();
+          this._showStatusPop('SPEED BOOST  8s', 0x00ff88);
+          this.cameras.main.shake(80, 0.003);
+          break;
+        case 'powerup_freeze':
+          AM.playFreezeSound();
+          this._freezeActive = true; this._freezeTimer = 5;
+          this._showStatusPop('TIME FREEZE  5s', 0x88ddff);
+          this.cameras.main.shake(120, 0.004);
+          break;
+        case 'powerup_emp':
+          AM.playEMPSound();
+          this._applyEMP();
+          this._showStatusPop('EMP BLAST!', 0xffff44);
+          break;
       }
     }
 
     _showStatusPop(msg, color) {
       const { width } = this.scale;
       const txt = this.add.text(width/2, 90, msg, {
-        font: 'bold 18px "Courier New"', fill: '#' + color.toString(16).padStart(6,'0'),
+        font: 'bold 18px "Courier New"', fill: '#' + color.toString(16).padStart(6, '0'),
         stroke: '#000000', strokeThickness: 3, backgroundColor: '#00000088', padding: { x:10, y:5 }
       }).setDepth(60).setOrigin(0.5);
       this.tweens.add({ targets: txt, y: 65, alpha: 0, delay: 1200, duration: 800, onComplete: () => txt.destroy() });
@@ -1312,10 +1920,10 @@
       const dL = spawnX, dR = width-spawnX, dT = spawnY, dB = height-spawnY;
       const minD = Math.min(dL, dR, dT, dB);
       let ax = spawnX, ay = spawnY, rot = 0;
-      if      (minD === dT) { ax = spawnX;   ay = 20;        rot = 0; }
-      else if (minD === dB) { ax = spawnX;   ay = height-20; rot = Math.PI; }
-      else if (minD === dL) { ax = 20;       ay = spawnY;    rot = -Math.PI/2; }
-      else                  { ax = width-20; ay = spawnY;    rot = Math.PI/2; }
+      if      (minD === dT) { ax = spawnX; ay = 20; rot = 0; }
+      else if (minD === dB) { ax = spawnX; ay = height-20; rot = Math.PI; }
+      else if (minD === dL) { ax = 20; ay = spawnY; rot = -Math.PI/2; }
+      else                  { ax = width-20; ay = spawnY; rot = Math.PI/2; }
       const arrow = this.add.image(ax, ay, 'spawn_arrow').setRotation(rot).setDepth(80).setAlpha(0.9);
       this.tweens.add({ targets: arrow, alpha: 0, delay: 1200, duration: 300, onComplete: () => arrow.destroy() });
     }
@@ -1331,39 +1939,37 @@
     _buildHUD() {
       const { width } = this.scale;
       this._hudBg = this.add.graphics().setDepth(88);
-      this._hudBg.fillStyle(0x000022, 0.78);
-      this._hudBg.fillRect(0, 0, width, 46);
-      this._hudBg.lineStyle(1, 0x223366, 1);
-      this._hudBg.strokeRect(0, 0, width, 46);
+      this._hudBg.fillStyle(0x000022, 0.78); this._hudBg.fillRect(0, 0, width, 46);
+      this._hudBg.lineStyle(1, 0x223366, 1); this._hudBg.strokeRect(0, 0, width, 46);
 
-      this._scoreTxt = this.add.text(12, 8, 'SCORE  0', {
-        font: 'bold 18px "Courier New"', fill: '#66eeff'
-      }).setDepth(89);
-
-      this._levelTxt = this.add.text(width/2, 8, `LEVEL ${this._level}`, {
-        font: 'bold 18px "Courier New"', fill: '#aaddff'
-      }).setDepth(89).setOrigin(0.5, 0);
-
-      this._debrisTxt = this.add.text(width/2, 26, `0 / ${this._cfg.debris}`, {
-        font: '13px "Courier New"', fill: '#88ccee'
-      }).setDepth(89).setOrigin(0.5, 0);
-
-      this._timerTxt = this.add.text(width - 12, 8, `${this._timeLeft}s`, {
-        font: 'bold 20px "Courier New"', fill: '#ccffcc'
-      }).setDepth(89).setOrigin(1, 0);
+      this._scoreTxt = this.add.text(12, 8, 'SCORE  0', { font: 'bold 18px "Courier New"', fill: '#66eeff' }).setDepth(89);
+      this._levelTxt = this.add.text(width/2, 8, `LEVEL ${this._level}`, { font: 'bold 18px "Courier New"', fill: '#aaddff' }).setDepth(89).setOrigin(0.5, 0);
+      this._debrisTxt = this.add.text(width/2, 26, `0 / ${this._cfg.debris}`, { font: '13px "Courier New"', fill: '#88ccee' }).setDepth(89).setOrigin(0.5, 0);
+      this._timerTxt  = this.add.text(width - 12, 8, `${this._timeLeft}s`, { font: 'bold 20px "Courier New"', fill: '#ccffcc' }).setDepth(89).setOrigin(1, 0);
 
       this._heartImgs = [];
       for (let i = 0; i < 3; i++) {
-        const h = this.add.image(width - 114 + i * 26, 27, 'heart').setDepth(89).setScale(1.0);
-        this._heartImgs.push(h);
+        this._heartImgs.push(this.add.image(width - 114 + i * 26, 27, 'heart').setDepth(89).setScale(1.0));
       }
 
-      // Power-up active timer line below HUD bar
       this._powerupLineTxt = this.add.text(width/2, 54, '', {
         font: 'bold 14px "Courier New"', fill: '#ffffff',
-        stroke: '#000000', strokeThickness: 3,
-        backgroundColor: '#00000099', padding: { x:8, y:3 }
+        stroke: '#000000', strokeThickness: 3, backgroundColor: '#00000099', padding: { x:8, y:3 }
       }).setDepth(90).setOrigin(0.5, 0).setAlpha(0);
+
+      // Boss HP bar (hidden until boss spawns)
+      if (this._cfg.hasBoss) {
+        const barW = 220, barH = 10, barX = width/2 - barW/2, barY = 53;
+        this._bossHpBarBg = this.add.graphics().setDepth(89);
+        this._bossHpBarBg.fillStyle(0x330000, 0.85); this._bossHpBarBg.fillRoundedRect(barX, barY, barW, barH, 3);
+        this._bossHpBarBg.lineStyle(1, 0xff2200, 0.5); this._bossHpBarBg.strokeRoundedRect(barX, barY, barW, barH, 3);
+        this._bossHpBarBg.setAlpha(0);
+
+        this._bossHpBarFg = this.add.graphics().setDepth(90).setAlpha(0);
+        this._bossHpLbl = this.add.text(width/2, barY - 14, '☠ BOSS', {
+          font: 'bold 11px "Courier New"', fill: '#ff4444'
+        }).setDepth(90).setOrigin(0.5, 0).setAlpha(0);
+      }
     }
 
     _updateHUD(time) {
@@ -1381,17 +1987,85 @@
 
       this._heartImgs.forEach((h, i) => h.setVisible(i < this._health));
 
-      // Active power-up countdown below HUD
+      // Power-up countdown line
       const lines = [];
-      if (this._shieldActive) lines.push({ text: `SHIELD  ${Math.ceil(this._shieldTimer)}s`,        color: '#44ccff' });
-      if (this._vacuumActive) lines.push({ text: `SUPER VACUUM  ${Math.ceil(this._vacuumTimer)}s`, color: '#ffdd00' });
+      if (this._shieldActive) lines.push({ text: `SHIELD ${Math.ceil(this._shieldTimer)}s`,     color: '#44ccff' });
+      if (this._vacuumActive) lines.push({ text: `VACUUM ${Math.ceil(this._vacuumTimer)}s`,      color: '#ffdd00' });
+      if (this._speedActive)  lines.push({ text: `SPEED ${Math.ceil(this._speedTimer)}s`,        color: '#00ff88' });
+      if (this._freezeActive) lines.push({ text: `FREEZE ${Math.ceil(this._freezeTimer)}s`,      color: '#88ddff' });
+
+      // If boss HP bar visible, shift power-up line up
+      const hasBossBar = this._cfg.hasBoss && this._bossExtra;
+      this._powerupLineTxt.setY(hasBossBar ? 68 : 54);
+
       if (lines.length > 0) {
         const col = lines.length > 1 ? '#ffffff' : lines[0].color;
-        this._powerupLineTxt.setText(lines.map(l => l.text).join('   ')).setStyle({ fill: col }).setAlpha(1);
+        this._powerupLineTxt.setText(lines.map(l => l.text).join('  ')).setStyle({ fill: col }).setAlpha(1);
       } else { this._powerupLineTxt.setAlpha(0); }
+
+      // Boss HP bar
+      if (this._cfg.hasBoss && this._bossHpBarBg) {
+        if (this._bossExtra) {
+          this._bossHpBarBg.setAlpha(1); this._bossHpBarFg.setAlpha(1); this._bossHpLbl.setAlpha(1);
+          const frac = Math.max(0, this._bossExtra.hp / this._bossExtra.maxHp);
+          const barW = 220, barH = 10, barX = this.scale.width/2 - barW/2, barY = 53;
+          this._bossHpBarFg.clear();
+          const col = this._bossExtra.phase === 2 ? 0xff4400 : 0xff0000;
+          this._bossHpBarFg.fillStyle(col, 0.92);
+          this._bossHpBarFg.fillRoundedRect(barX, barY, barW * frac, barH, 3);
+          if (this._bossExtra.phase === 2) {
+            this._bossHpBarFg.fillStyle(0xff8800, 0.4 + 0.3 * Math.sin(time * 0.01));
+            this._bossHpBarFg.fillRoundedRect(barX, barY, barW * frac, barH, 3);
+          }
+        } else {
+          this._bossHpBarBg.setAlpha(0);
+          if (this._bossHpBarFg) this._bossHpBarFg.setAlpha(0);
+          if (this._bossHpLbl)   this._bossHpLbl.setAlpha(0);
+        }
+      }
     }
 
-    // ── PAUSE / RESUME ────────────────────────────────────────────────────────
+    // ── PAUSE MENU (with buttons) ─────────────────────────────────────────────
+    _buildPauseOverlay() {
+      const { width, height } = this.scale;
+      this._pauseOverlay = this.add.container(width/2, height/2).setDepth(100).setVisible(false);
+
+      const bg = this.add.rectangle(0, 0, 380, 220, 0x000033, 0.92).setStrokeStyle(2, 0x4466ff);
+      const titleTxt = this.add.text(0, -75, 'PAUSED', {
+        font: 'bold 42px "Courier New"', fill: '#ffffff', stroke: '#003399', strokeThickness: 4
+      }).setOrigin(0.5);
+      const ctrlTxt = this.add.text(0, -30, 'SPACE shoot  •  SHIFT dash  •  WASD move', {
+        font: '11px "Courier New"', fill: '#7799bb'
+      }).setOrigin(0.5);
+
+      // Resume button
+      const resumeBtn = this.add.text(0, 20, '[ RESUME ]', {
+        font: 'bold 22px "Courier New"', fill: '#ffffff',
+        backgroundColor: '#004400', padding: { x:18, y:9 },
+        stroke: '#00cc44', strokeThickness: 2
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      resumeBtn.on('pointerover', () => resumeBtn.setStyle({ backgroundColor: '#006600' }));
+      resumeBtn.on('pointerout',  () => resumeBtn.setStyle({ backgroundColor: '#004400' }));
+      resumeBtn.on('pointerdown', () => this._resume());
+
+      // Main menu button
+      const menuBtn = this.add.text(0, 76, '[ MAIN MENU ]', {
+        font: '16px "Courier New"', fill: '#8899cc', padding: { x:10, y:6 }
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      menuBtn.on('pointerover', () => menuBtn.setStyle({ fill: '#aabbff' }));
+      menuBtn.on('pointerout',  () => menuBtn.setStyle({ fill: '#8899cc' }));
+      menuBtn.on('pointerdown', () => {
+        this.game.registry.set('currentLevel', 1);
+        this.game.registry.set('score', 0);
+        this.game.registry.set('health', 3);
+        AM.stopMusic();
+        this.scene.start('MenuScene');
+      });
+
+      this._pauseOverlay.add([bg, titleTxt, ctrlTxt, resumeBtn, menuBtn]);
+      this.tweens.add({ targets: resumeBtn, scaleX:1.04, scaleY:1.04, duration:800, yoyo:true, repeat:-1 });
+    }
+
     _pause() {
       this._paused = true;
       if (this._gameTimer) this._gameTimer.paused = true;
@@ -1412,7 +2086,6 @@
       if (this._gameTimer) this._gameTimer.remove();
       this.physics.pause();
 
-      // Save to leaderboard and flag whether it's a new top-5 entry
       const isNewEntry = lbInsert(this._score, this._level);
       this.game.registry.set('isNewHighScore', isNewEntry);
 
@@ -1441,7 +2114,6 @@
   // ═══════════════════════════════════════════════════════════════════════════
   class LevelCompleteScene extends Phaser.Scene {
     constructor() { super({ key: 'LevelCompleteScene' }); }
-
     init(data) { this._level = data.level; this._score = data.score; this._timeLeft = data.timeLeft || 0; }
 
     create() {
@@ -1458,12 +2130,9 @@
       const nextCfg     = isLastLevel ? null : LEVELS[nextLevel - 1];
 
       const container = this.add.container(0, -300);
-
-      const panelGfx = this.add.graphics();
-      panelGfx.fillStyle(0x001133, 0.90);
-      panelGfx.fillRoundedRect(width/2 - 270, 80, 540, 440, 14);
-      panelGfx.lineStyle(2, isLastLevel ? 0xffcc00 : 0x3366cc, 1);
-      panelGfx.strokeRoundedRect(width/2 - 270, 80, 540, 440, 14);
+      const panelGfx  = this.add.graphics();
+      panelGfx.fillStyle(0x001133, 0.90); panelGfx.fillRoundedRect(width/2 - 270, 80, 540, 440, 14);
+      panelGfx.lineStyle(2, isLastLevel ? 0xffcc00 : 0x3366cc, 1); panelGfx.strokeRoundedRect(width/2 - 270, 80, 540, 440, 14);
       container.add(panelGfx);
 
       const addText = (x, y, txt, style) => {
@@ -1478,15 +2147,16 @@
       });
       addText(width/2, 185, 'Score this level:', { font:'17px "Courier New"', fill:'#aaddff' });
       addText(width/2, 213, `${this._score}`, { font:'bold 34px "Courier New"', fill:'#ffdd44', stroke:'#664400', strokeThickness:4 });
-      addText(width/2, 260, `Time Bonus: ${this._timeLeft}s \u00d7 5 = +${timeBonus} pts`, { font:'17px "Courier New"', fill:'#66ff88' });
+      addText(width/2, 260, `Time Bonus: ${this._timeLeft}s × 5 = +${timeBonus} pts`, { font:'17px "Courier New"', fill:'#66ff88' });
       addText(width/2, 292, `Total Score: ${totalScore}`, { font:'bold 26px "Courier New"', fill:'#ffee66', stroke:'#664400', strokeThickness:3 });
 
       if (!isLastLevel) {
-        addText(width/2, 340, `Next up \u2014 Level ${nextLevel}`, { font:'16px "Courier New"', fill:'#88aacc' });
-        addText(width/2, 366, `${nextCfg.debris} debris  \u2022  ${nextCfg.timer}s  \u2022  ${nextCfg.enemies} enemies`, { font:'18px "Courier New"', fill:'#aabbdd' });
+        const hasBoss = nextCfg && nextCfg.hasBoss ? '  •  BOSS!' : '';
+        addText(width/2, 340, `Next up — Level ${nextLevel}`, { font:'16px "Courier New"', fill:'#88aacc' });
+        addText(width/2, 366, `${nextCfg.debris} debris  •  ${nextCfg.timer}s  •  ${nextCfg.enemies} enemies${hasBoss}`, { font:'18px "Courier New"', fill:'#aabbdd' });
       } else {
         addText(width/2, 348, 'ALL 5 LEVELS CLEARED!', { font:'bold 22px "Courier New"', fill:'#ffcc00', stroke:'#664400', strokeThickness:3 });
-        addText(width/2, 378, 'Earth\'s orbit is spotless.', { font:'16px "Courier New"', fill:'#aaffcc' });
+        addText(width/2, 378, "Earth's orbit is spotless.", { font:'16px "Courier New"', fill:'#aaffcc' });
       }
 
       const btnLabel = isLastLevel ? '[ MISSION COMPLETE ]' : '[ NEXT LEVEL ]';
@@ -1518,7 +2188,6 @@
   // ═══════════════════════════════════════════════════════════════════════════
   class GameOverScene extends Phaser.Scene {
     constructor() { super({ key: 'GameOverScene' }); }
-
     init(data) {
       this._missionComplete = data.missionComplete;
       this._score           = data.score;
@@ -1532,10 +2201,8 @@
       AM.playMenuMusic();
 
       const { width } = this.scale;
-
       const panel = this.add.graphics();
-      panel.fillStyle(0x110011, 0.88);
-      panel.fillRoundedRect(width/2 - 280, 70, 560, 440, 14);
+      panel.fillStyle(0x110011, 0.88); panel.fillRoundedRect(width/2 - 280, 70, 560, 440, 14);
       panel.lineStyle(2, this._missionComplete ? 0x33cc66 : 0xcc3333, 1);
       panel.strokeRoundedRect(width/2 - 280, 70, 560, 440, 14);
 
@@ -1544,7 +2211,7 @@
           font:'bold 38px "Courier New"', fill:'#66ff88',
           stroke:'#003322', strokeThickness:6, shadow:{color:'#00ff88',blur:28,fill:true}
         }).setOrigin(0.5);
-        this.add.text(width/2, 166, 'Earth\'s orbit is spotless.\nThe VIP cruiser docks safely.', {
+        this.add.text(width/2, 166, "Earth's orbit is spotless.\nThe VIP cruiser docks safely.", {
           font:'16px "Courier New"', fill:'#aaffcc', align:'center', lineSpacing:5
         }).setOrigin(0.5);
       } else {
@@ -1562,32 +2229,24 @@
         font:'bold 44px "Courier New"', fill:'#ffdd44', stroke:'#664400', strokeThickness:4
       }).setOrigin(0.5);
 
-      // Stars rating
       const stars = this._score >= 300 ? '★★★' : this._score >= 150 ? '★★☆' : '★☆☆';
       this.add.text(width/2, 316, stars, { font:'36px "Courier New"', fill:'#ffcc00' }).setOrigin(0.5);
 
-      // High score notice
-      const isNew   = this.game.registry.get('isNewHighScore');
-      const best    = lbBest();
+      const isNew = this.game.registry.get('isNewHighScore');
+      const best  = lbBest();
       if (isNew) {
         const newHSTxt = this.add.text(width/2, 358, 'NEW HIGH SCORE!', {
-          font:'bold 18px "Courier New"', fill:'#ffd700',
-          stroke:'#664400', strokeThickness:3
+          font:'bold 18px "Courier New"', fill:'#ffd700', stroke:'#664400', strokeThickness:3
         }).setOrigin(0.5);
-        // Flashing tween
         this.tweens.add({ targets: newHSTxt, alpha: 0.2, duration: 500, yoyo:true, repeat:-1 });
       } else if (best > 0) {
-        this.add.text(width/2, 358, `Your best: ${best}`, {
-          font:'14px "Courier New"', fill:'#8899aa'
-        }).setOrigin(0.5);
+        this.add.text(width/2, 358, `Your best: ${best}`, { font:'14px "Courier New"', fill:'#8899aa' }).setOrigin(0.5);
       }
 
-      // Restart button
       const btnLabel = this._missionComplete ? '[ PLAY AGAIN ]' : '[ RESTART FROM LEVEL 1 ]';
       const btn = this.add.text(width/2, 400, btnLabel, {
         font:'bold 21px "Courier New"', fill:'#ffffff',
-        backgroundColor:'#220033', padding:{x:18,y:11},
-        stroke:'#6633cc', strokeThickness:3
+        backgroundColor:'#220033', padding:{x:18,y:11}, stroke:'#6633cc', strokeThickness:3
       }).setOrigin(0.5).setInteractive({ useHandCursor:true });
       btn.on('pointerover', () => btn.setStyle({ backgroundColor:'#440066' }));
       btn.on('pointerout',  () => btn.setStyle({ backgroundColor:'#220033' }));
@@ -1601,7 +2260,6 @@
       });
       this.tweens.add({ targets: btn, scaleX:1.04, scaleY:1.04, duration:900, yoyo:true, repeat:-1 });
 
-      // Main menu button
       const menuBtn = this.add.text(width/2, 452, '[ MAIN MENU ]', {
         font:'16px "Courier New"', fill:'#8899cc', padding:{x:10,y:6}
       }).setOrigin(0.5).setInteractive({ useHandCursor:true });
