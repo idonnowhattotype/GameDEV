@@ -669,6 +669,8 @@ export default function App() {
     lastTime: 0,
     animFrame: 0,
     bossWarning: 0,
+    isMobile: false,
+    touch: { active: false, startX: 0, startY: 0, knobX: 0, knobY: 0 },
   });
   const [displayScore, setDisplayScore] = useState(0);
   const [displayHp, setDisplayHp] = useState(5);
@@ -697,6 +699,9 @@ export default function App() {
 
   useEffect(() => {
     const s = stateRef.current;
+
+    s.isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
     // Init stars
     s.stars = Array.from({ length: 130 }, () => ({
       x: rand(0, CANVAS_W),
@@ -713,9 +718,56 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
 
+    const canvas = canvasRef.current;
+    const THRESH = 25;
+    const MAX_R = 55;
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      s.touch = { active: true, startX: touch.clientX, startY: touch.clientY, knobX: 0, knobY: 0 };
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      if (!s.touch.active) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - s.touch.startX;
+      const dy = touch.clientY - s.touch.startY;
+      const mag = Math.sqrt(dx * dx + dy * dy);
+      const scale = mag > MAX_R ? MAX_R / mag : 1;
+      s.touch.knobX = dx * scale;
+      s.touch.knobY = dy * scale;
+      s.keys["KeyA"] = dx < -THRESH;
+      s.keys["KeyD"] = dx > THRESH;
+      s.keys["KeyW"] = dy < -THRESH;
+      s.keys["KeyS"] = dy > THRESH;
+    };
+
+    const onTouchEnd = () => {
+      s.touch = { active: false, startX: 0, startY: 0, knobX: 0, knobY: 0 };
+      s.keys["KeyA"] = false;
+      s.keys["KeyD"] = false;
+      s.keys["KeyW"] = false;
+      s.keys["KeyS"] = false;
+    };
+
+    if (canvas) {
+      canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+      canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+      canvas.addEventListener("touchend", onTouchEnd);
+      canvas.addEventListener("touchcancel", onTouchEnd);
+    }
+
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
+      if (canvas) {
+        canvas.removeEventListener("touchstart", onTouchStart);
+        canvas.removeEventListener("touchmove", onTouchMove);
+        canvas.removeEventListener("touchend", onTouchEnd);
+        canvas.removeEventListener("touchcancel", onTouchEnd);
+      }
     };
   }, []);
 
@@ -1016,13 +1068,68 @@ export default function App() {
       ctx.textAlign = "center";
       ctx.fillText("HULL", CANVAS_W - 80, 37);
 
-      // Controls hint
-      ctx.globalAlpha = 0.4;
-      ctx.fillStyle = "#aaeeff";
-      ctx.font = "11px 'Courier New', monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("WASD / Arrow Keys to move  •  Auto-fire active", CANVAS_W / 2, CANVAS_H - 10);
-      ctx.globalAlpha = 1;
+      // Controls hint — keyboard only, hidden on mobile
+      if (!s.isMobile) {
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = "#aaeeff";
+        ctx.font = "11px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("WASD / Arrow Keys to move  •  Auto-fire active", CANVAS_W / 2, CANVAS_H - 10);
+        ctx.globalAlpha = 1;
+      }
+
+      // Touch joystick — mobile only
+      if (s.isMobile) {
+        const jx = 90, jy = CANVAS_H - 90;
+        const baseR = 55, knobR = 22;
+
+        // Outer ring
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = "#7dfff5";
+        ctx.lineWidth = 2;
+        ctx.fillStyle = "rgba(10,30,60,0.55)";
+        ctx.beginPath();
+        ctx.arc(jx, jy, baseR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Direction arrows
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = "#7dfff5";
+        ctx.font = "bold 13px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("▲", jx, jy - baseR + 16);
+        ctx.fillText("▼", jx, jy + baseR - 4);
+        ctx.textAlign = "left";
+        ctx.fillText("◀", jx - baseR + 6, jy + 5);
+        ctx.fillText("▶", jx + baseR - 14, jy + 5);
+
+        // Knob
+        const kx = jx + (s.touch.active ? s.touch.knobX : 0);
+        const ky = jy + (s.touch.active ? s.touch.knobY : 0);
+        ctx.globalAlpha = s.touch.active ? 0.85 : 0.55;
+        const knobGrad = ctx.createRadialGradient(kx - 4, ky - 4, 0, kx, ky, knobR);
+        knobGrad.addColorStop(0, "rgba(180,255,250,0.95)");
+        knobGrad.addColorStop(0.5, "rgba(0,180,200,0.8)");
+        knobGrad.addColorStop(1, "rgba(0,60,100,0.5)");
+        ctx.fillStyle = knobGrad;
+        ctx.beginPath();
+        ctx.arc(kx, ky, knobR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#7dfff5";
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.7;
+        ctx.stroke();
+
+        // "DRAG" label
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = "#aaeeff";
+        ctx.font = "9px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("DRAG", jx, jy + baseR + 14);
+
+        ctx.globalAlpha = 1;
+      }
 
       // Overlay screens
       if (phase === "dead") {
@@ -1069,19 +1176,73 @@ export default function App() {
         justifyContent: "center",
         fontFamily: "'Courier New', monospace",
         userSelect: "none",
+        padding: "24px 16px",
       }}
     >
-      <div style={{ marginBottom: 12, display: "flex", gap: 32, alignItems: "center" }}>
-        <span style={{ color: "#7dfff5", fontSize: 22, fontWeight: "bold", letterSpacing: 3 }}>
-          COSMIC CLEANUP
-        </span>
-        <span style={{ color: "#aaa", fontSize: 13 }}>
-          Fighters <span style={{ color: "#ff5555" }}>■</span>&nbsp;
-          Raiders <span style={{ color: "#ff8800" }}>■</span>&nbsp;
-          Brutes <span style={{ color: "#cc44ff" }}>■</span>&nbsp;
-          Debris <span style={{ color: "#888" }}>■</span>
-        </span>
+      {/* ── Header ───────────────────────────────────────────────────── */}
+      <div style={{ textAlign: "center", marginBottom: 22 }}>
+        {/* Title */}
+        <div style={{ marginBottom: 8 }}>
+          <span
+            style={{
+              color: "#7dfff5",
+              fontSize: 34,
+              fontWeight: "bold",
+              letterSpacing: 7,
+              textShadow:
+                "0 0 18px rgba(0,220,255,0.75), 0 0 40px rgba(0,120,220,0.45)",
+              display: "inline-block",
+            }}
+          >
+            COSMIC CLEANUP
+          </span>
+        </div>
+
+        {/* Subtitle */}
+        <div style={{ marginBottom: 16 }}>
+          <span
+            style={{
+              color: "#2d7a96",
+              fontSize: 11,
+              letterSpacing: 5,
+              textTransform: "uppercase",
+            }}
+          >
+            Orbital Debris Elimination Protocol
+          </span>
+        </div>
+
+        {/* Divider */}
+        <div
+          style={{
+            width: 320,
+            height: 1,
+            margin: "0 auto 16px",
+            background:
+              "linear-gradient(90deg, transparent, #1a6a8a 30%, #3af0ff 50%, #1a6a8a 70%, transparent)",
+          }}
+        />
+
+        {/* Enemy legend */}
+        <div style={{ display: "flex", gap: 28, justifyContent: "center", alignItems: "center" }}>
+          {[
+            { label: "Fighters", color: "#ff5555" },
+            { label: "Raiders",  color: "#ff8800" },
+            { label: "Brutes",   color: "#cc44ff" },
+            { label: "Debris",   color: "#666" },
+          ].map(({ label, color }) => (
+            <span
+              key={label}
+              style={{ color: "#99b8c8", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}
+            >
+              <span style={{ color, fontSize: 10 }}>■</span>
+              {label}
+            </span>
+          ))}
+        </div>
       </div>
+
+      {/* ── Canvas ───────────────────────────────────────────────────── */}
       <canvas
         ref={canvasRef}
         width={CANVAS_W}
@@ -1089,16 +1250,21 @@ export default function App() {
         style={{
           border: "2px solid #1a4a6a",
           borderRadius: 6,
-          boxShadow: "0 0 40px rgba(0,180,255,0.2), 0 0 80px rgba(0,60,120,0.3)",
+          boxShadow:
+            "0 0 40px rgba(0,180,255,0.2), 0 0 80px rgba(0,60,120,0.3)",
           display: "block",
+          touchAction: "none",
+          maxWidth: "100%",
         }}
       />
+
+      {/* ── Restart button ───────────────────────────────────────────── */}
       {phase === "dead" && (
         <button
           onClick={resetGame}
           style={{
-            marginTop: 16,
-            padding: "10px 32px",
+            marginTop: 22,
+            padding: "12px 40px",
             background: "linear-gradient(135deg,#003355,#006699)",
             color: "#7dfff5",
             border: "2px solid #3af0ff",
