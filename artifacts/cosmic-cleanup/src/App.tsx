@@ -8,6 +8,23 @@ interface Bullet { x: number; y: number; vy: number; friendly: boolean }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; r: number; color: string }
 interface Star { x: number; y: number; r: number; speed: number; alpha: number }
 
+interface ScorePopup {
+  x: number; y: number;
+  vy: number;
+  text: string;
+  life: number;
+  maxLife: number;
+}
+
+interface Boss {
+  x: number; y: number;
+  w: number; h: number;
+  hp: number; maxHp: number;
+  vx: number;
+  fireTimer: number;
+  tint: string | null;
+}
+
 interface Player {
   x: number; y: number;
   w: number; h: number;
@@ -35,6 +52,7 @@ interface Enemy {
   fireInterval: number;
   rot: number;
   bobOffset: number;
+  tint: string | null;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -203,11 +221,9 @@ function drawDebris(ctx: CanvasRenderingContext2D, d: Debris) {
   const { pts, color, craterColor } = d.shape;
   const r = d.r;
 
-  // Shadow/depth
   ctx.shadowColor = "rgba(0,0,0,0.5)";
   ctx.shadowBlur = 6;
 
-  // Main body
   const bodyGrad = ctx.createRadialGradient(-r * 0.2, -r * 0.25, r * 0.05, 0, 0, r);
   bodyGrad.addColorStop(0, lighten(color, 30));
   bodyGrad.addColorStop(0.5, color);
@@ -220,12 +236,10 @@ function drawDebris(ctx: CanvasRenderingContext2D, d: Debris) {
   ctx.fill();
   ctx.shadowBlur = 0;
 
-  // Edge outline
   ctx.strokeStyle = darken(color, 20);
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Craters
   const numCraters = Math.floor(r / 8);
   for (let i = 0; i < numCraters; i++) {
     const angle = (i / numCraters) * Math.PI * 2 + 0.3;
@@ -242,7 +256,6 @@ function drawDebris(ctx: CanvasRenderingContext2D, d: Debris) {
     ctx.stroke();
   }
 
-  // Surface scratch lines
   ctx.strokeStyle = darken(color, 35);
   ctx.lineWidth = 0.8;
   for (let i = 0; i < 3; i++) {
@@ -274,6 +287,14 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, e: Enemy, t: number) {
     drawRaiderEnemy(ctx, hw, hh);
   }
 
+  // HP tint overlay
+  if (e.tint) {
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = e.tint;
+    ctx.fillRect(-hw, -hh, e.w, e.h);
+    ctx.globalAlpha = 1;
+  }
+
   // HP bar (only if damaged)
   if (e.hp < e.maxHp) {
     const barW = e.w * 1.2;
@@ -294,7 +315,6 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, e: Enemy, t: number) {
 }
 
 function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
-  // Engine glow (facing down = moving toward player)
   const egGrad = ctx.createRadialGradient(0, -hh * 0.5, 0, 0, -hh * 0.5, hw * 0.8);
   egGrad.addColorStop(0, "rgba(255,60,0,0.85)");
   egGrad.addColorStop(0.5, "rgba(200,20,0,0.4)");
@@ -304,7 +324,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.ellipse(0, -hh * 0.5, hw * 0.8, hh * 0.6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Main hull — sharp pointed downward wedge (threats point at player)
   const hullGrad = ctx.createLinearGradient(-hw, 0, hw, 0);
   hullGrad.addColorStop(0, "#2a0a0a");
   hullGrad.addColorStop(0.4, "#6b1414");
@@ -313,7 +332,7 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   hullGrad.addColorStop(1, "#2a0a0a");
   ctx.fillStyle = hullGrad;
   ctx.beginPath();
-  ctx.moveTo(0, hh);               // nose pointing DOWN toward player
+  ctx.moveTo(0, hh);
   ctx.lineTo(hw * 0.4, hh * 0.2);
   ctx.lineTo(hw * 0.3, -hh * 0.4);
   ctx.lineTo(-hw * 0.3, -hh * 0.4);
@@ -324,13 +343,11 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Side wings with spikes
   ctx.fillStyle = "#3d0d0d";
-  // Left wing
   ctx.beginPath();
   ctx.moveTo(-hw * 0.3, -hh * 0.4);
   ctx.lineTo(-hw, hh * 0.1);
-  ctx.lineTo(-hw * 1.15, hh * 0.35); // spike tip
+  ctx.lineTo(-hw * 1.15, hh * 0.35);
   ctx.lineTo(-hw * 0.9, hh * 0.15);
   ctx.lineTo(-hw * 0.4, hh * 0.2);
   ctx.closePath();
@@ -338,7 +355,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.strokeStyle = "#cc3333";
   ctx.lineWidth = 1;
   ctx.stroke();
-  // Right wing
   ctx.beginPath();
   ctx.moveTo(hw * 0.3, -hh * 0.4);
   ctx.lineTo(hw, hh * 0.1);
@@ -351,7 +367,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Red glow strips on wings
   ctx.shadowColor = "#ff2200";
   ctx.shadowBlur = 8;
   ctx.strokeStyle = "rgba(255,80,30,0.8)";
@@ -366,7 +381,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Menacing "eye" sensor
   ctx.fillStyle = "#ff0000";
   ctx.shadowColor = "#ff4400";
   ctx.shadowBlur = 10;
@@ -379,7 +393,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
   ctx.arc(0, hh * 0.3, 2.5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Gun barrels pointing down
   ctx.fillStyle = "#1a0505";
   ctx.fillRect(-hw * 0.5 - 2, hh * 0.35, 4, hh * 0.4);
   ctx.fillRect(hw * 0.5 - 2, hh * 0.35, 4, hh * 0.4);
@@ -389,7 +402,6 @@ function drawFighterEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number)
 }
 
 function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
-  // Glowing purple/dark engine top
   const eg = ctx.createRadialGradient(0, -hh * 0.6, 0, 0, -hh * 0.6, hw);
   eg.addColorStop(0, "rgba(160,0,200,0.8)");
   eg.addColorStop(1, "rgba(60,0,80,0)");
@@ -398,7 +410,6 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
   ctx.ellipse(0, -hh * 0.6, hw, hh * 0.7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Massive blocky hull
   const hullGrad = ctx.createLinearGradient(-hw, -hh, hw, hh);
   hullGrad.addColorStop(0, "#1a001a");
   hullGrad.addColorStop(0.3, "#4a0a6a");
@@ -421,7 +432,6 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Spine plates
   ctx.fillStyle = "#350045";
   for (let i = -2; i <= 2; i++) {
     ctx.beginPath();
@@ -429,8 +439,7 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
     ctx.fill();
   }
 
-  // Triple barrel cannons
-  for (let dx of [-hw * 0.5, 0, hw * 0.5]) {
+  for (const dx of [-hw * 0.5, 0, hw * 0.5]) {
     ctx.fillStyle = "#200028";
     ctx.fillRect(dx - 4, hh * 0.5, 8, hh * 0.7);
     ctx.fillStyle = "#aa00cc";
@@ -442,9 +451,8 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
     ctx.shadowBlur = 0;
   }
 
-  // Multi eye array
   const eyeY = hh * 0.1;
-  for (let ex of [-hw * 0.4, 0, hw * 0.4]) {
+  for (const ex of [-hw * 0.4, 0, hw * 0.4]) {
     ctx.fillStyle = "#ff00ff";
     ctx.shadowColor = "#ff55ff";
     ctx.shadowBlur = 12;
@@ -458,7 +466,6 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
     ctx.fill();
   }
 
-  // Shoulder spikes
   ctx.fillStyle = "#3a0050";
   ctx.strokeStyle = "#bb33ff";
   ctx.lineWidth = 1;
@@ -474,7 +481,6 @@ function drawBruteEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
 }
 
 function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
-  // Orange/dark engine
   const eg = ctx.createRadialGradient(0, -hh * 0.4, 0, 0, -hh * 0.4, hw * 0.9);
   eg.addColorStop(0, "rgba(255,120,0,0.85)");
   eg.addColorStop(1, "rgba(80,30,0,0)");
@@ -483,7 +489,6 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.ellipse(0, -hh * 0.4, hw * 0.9, hh * 0.6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Asymmetric raider hull — feels chaotic
   const hullGrad = ctx.createLinearGradient(-hw, 0, hw, 0);
   hullGrad.addColorStop(0, "#1a0c00");
   hullGrad.addColorStop(0.35, "#7a3500");
@@ -492,7 +497,7 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   hullGrad.addColorStop(1, "#1a0c00");
   ctx.fillStyle = hullGrad;
   ctx.beginPath();
-  ctx.moveTo(hw * 0.15, hh);    // offset nose
+  ctx.moveTo(hw * 0.15, hh);
   ctx.lineTo(hw * 0.65, hh * 0.5);
   ctx.lineTo(hw, -hh * 0.1);
   ctx.lineTo(hw * 0.6, -hh);
@@ -505,9 +510,7 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Jagged side blades
   ctx.fillStyle = "#2a1000";
-  // Right blade
   ctx.beginPath();
   ctx.moveTo(hw, -hh * 0.1);
   ctx.lineTo(hw * 1.35, -hh * 0.4);
@@ -518,7 +521,6 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.strokeStyle = "#ff6600";
   ctx.lineWidth = 1;
   ctx.stroke();
-  // Left blade (smaller, ragged)
   ctx.beginPath();
   ctx.moveTo(-hw, -hh * 0.2);
   ctx.lineTo(-hw * 1.2, -hh * 0.6);
@@ -528,7 +530,6 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.fill();
   ctx.stroke();
 
-  // Glow strips
   ctx.shadowColor = "#ff6600";
   ctx.shadowBlur = 8;
   ctx.strokeStyle = "rgba(255,140,0,0.8)";
@@ -539,7 +540,6 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Single menacing slit eye
   const eyeGrad = ctx.createLinearGradient(-hw * 0.35, 0, hw * 0.35, 0);
   eyeGrad.addColorStop(0, "rgba(255,80,0,0)");
   eyeGrad.addColorStop(0.5, "rgba(255,200,0,1)");
@@ -552,7 +552,6 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
   ctx.fill();
   ctx.shadowBlur = 0;
 
-  // Jagged front teeth/spikes
   ctx.fillStyle = "#3a1500";
   for (let i = -1; i <= 1; i++) {
     ctx.beginPath();
@@ -563,6 +562,92 @@ function drawRaiderEnemy(ctx: CanvasRenderingContext2D, hw: number, hh: number) 
     ctx.fillStyle = i === 0 ? "#ff4400" : "#aa2200";
     ctx.fill();
   }
+}
+
+/** Boss ship — massive, intimidating */
+function drawBossShip(ctx: CanvasRenderingContext2D, boss: Boss, frameCount: number) {
+  ctx.save();
+  ctx.translate(boss.x, boss.y);
+
+  const hw = boss.w / 2, hh = boss.h / 2;
+
+  // Engine glow
+  const eg = ctx.createRadialGradient(0, -hh * 0.7, 0, 0, -hh * 0.7, hw * 1.2);
+  eg.addColorStop(0, "rgba(255,0,80,0.9)");
+  eg.addColorStop(0.5, "rgba(180,0,40,0.5)");
+  eg.addColorStop(1, "rgba(60,0,0,0)");
+  ctx.fillStyle = eg;
+  ctx.beginPath();
+  ctx.ellipse(0, -hh * 0.7, hw * 1.2, hh * 0.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Main hull
+  const hullGrad = ctx.createLinearGradient(-hw, -hh, hw, hh);
+  hullGrad.addColorStop(0, "#1a0000");
+  hullGrad.addColorStop(0.3, "#5a0010");
+  hullGrad.addColorStop(0.6, "#990020");
+  hullGrad.addColorStop(1, "#2a0008");
+  ctx.fillStyle = hullGrad;
+  ctx.beginPath();
+  ctx.moveTo(0, hh);
+  ctx.lineTo(hw * 0.5, hh * 0.8);
+  ctx.lineTo(hw, hh * 0.4);
+  ctx.lineTo(hw * 1.1, 0);
+  ctx.lineTo(hw, -hh * 0.5);
+  ctx.lineTo(hw * 0.6, -hh);
+  ctx.lineTo(-hw * 0.6, -hh);
+  ctx.lineTo(-hw, -hh * 0.5);
+  ctx.lineTo(-hw * 1.1, 0);
+  ctx.lineTo(-hw, hh * 0.4);
+  ctx.lineTo(-hw * 0.5, hh * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#ff2244";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Armour plates
+  ctx.fillStyle = "#2a0008";
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.rect(i * hw * 0.25 - 7, -hh * 0.9, 14, hh * 1.6);
+    ctx.fill();
+  }
+
+  // Weapon arrays
+  for (const dx of [-hw * 0.7, -hw * 0.3, 0, hw * 0.3, hw * 0.7]) {
+    ctx.fillStyle = "#1a0005";
+    ctx.fillRect(dx - 5, hh * 0.55, 10, hh * 0.7);
+    ctx.fillStyle = "#dd0033";
+    ctx.shadowColor = "#ff2255";
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(dx, hh * 1.2, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Eye array (pulsing)
+  const pulse = 0.7 + 0.3 * Math.sin(frameCount * 0.12);
+  for (const ex of [-hw * 0.5, 0, hw * 0.5]) {
+    ctx.fillStyle = `rgba(255,0,50,${pulse})`;
+    ctx.shadowColor = "#ff0033";
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.arc(ex, hh * 0.15, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Boss tint overlay (damage feedback)
+  if (boss.tint) {
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = boss.tint;
+    ctx.fillRect(-hw, -hh, boss.w, boss.h);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
 }
 
 // Color helpers
@@ -587,6 +672,59 @@ const DEBRIS_SPAWN_INTERVAL = 1800;
 const ENEMY_SPAWN_INTERVAL = 4000;
 const MAX_DEBRIS = 14;
 const MAX_ENEMIES = 8;
+const BOSS_SCORE_THRESHOLD = 1000;
+const BOSS_MAX_HP = 100;
+
+// ─── AudioManager ─────────────────────────────────────────────────────────────
+class AudioManager {
+  muted: boolean;
+  private _ctx: AudioContext | null = null;
+
+  constructor() {
+    this.muted = localStorage.getItem("cosmicCleanup_muted") === "1";
+  }
+
+  private _getCtx(): AudioContext | null {
+    if (this.muted) return null;
+    if (!this._ctx) {
+      try { this._ctx = new AudioContext(); } catch { return null; }
+    }
+    return this._ctx;
+  }
+
+  private _tone(freq: number, dur: number, type: OscillatorType = "square", vol = 0.08) {
+    if (this.muted) return;
+    const ctx = this._getCtx();
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(vol, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + dur);
+    } catch { /* ignore */ }
+  }
+
+  playShootSound() { this._tone(880, 0.07, "square", 0.06); }
+  playHitSound() { this._tone(220, 0.12, "sawtooth", 0.07); }
+  playEnemyDestroySound() { this._tone(110, 0.25, "sawtooth", 0.1); }
+  playBossHitSound() { this._tone(180, 0.15, "sawtooth", 0.09); }
+  playBossDeathSound() {
+    this._tone(80, 0.5, "sawtooth", 0.15);
+    setTimeout(() => this._tone(60, 0.6, "sawtooth", 0.12), 200);
+  }
+  playGameOverSound() { this._tone(120, 0.6, "sawtooth", 0.12); }
+  stopMusic() {}
+  playGameMusic() {}
+  playMenuMusic() {}
+}
+
+const AM = new AudioManager();
 
 // ─── spawners ─────────────────────────────────────────────────────────────────
 function spawnDebris(w: number): Debris {
@@ -622,6 +760,7 @@ function spawnEnemy(w: number, score: number): Enemy {
     fireInterval: fi,
     rot: 0,
     bobOffset: rand(0, Math.PI * 2),
+    tint: null,
   };
 }
 
@@ -671,10 +810,16 @@ export default function App() {
     bossWarning: 0,
     isMobile: false,
     touch: { active: false, startX: 0, startY: 0, knobX: 0, knobY: 0 },
+    boss: null as Boss | null,
+    bossSpawned: false,
+    scorePopups: [] as ScorePopup[],
+    activePopups: [] as ScorePopup[],
+    frameCount: 0,
   });
   const [displayScore, setDisplayScore] = useState(0);
   const [displayHp, setDisplayHp] = useState(5);
   const [phase, setPhase] = useState<"playing" | "dead" | "paused">("playing");
+  const [muted, setMuted] = useState(() => AM.muted);
 
   const resetGame = useCallback(() => {
     const s = stateRef.current;
@@ -692,6 +837,11 @@ export default function App() {
     s.debrisTimer = 0;
     s.enemyTimer = 0;
     s.phase = "playing";
+    s.boss = null;
+    s.bossSpawned = false;
+    s.scorePopups = [];
+    s.activePopups = [];
+    s.frameCount = 0;
     setDisplayScore(0);
     setDisplayHp(5);
     setPhase("playing");
@@ -777,9 +927,50 @@ export default function App() {
     const ctx = canvas.getContext("2d")!;
     const s = stateRef.current;
 
+    // Mute button hit area (top-right corner of canvas)
+    const MUTE_X = CANVAS_W - 14;
+    const MUTE_Y = 14;
+    const MUTE_R = 16;
+
+    const onCanvasClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = CANVAS_W / rect.width;
+      const scaleY = CANVAS_H / rect.height;
+      const cx = (e.clientX - rect.left) * scaleX;
+      const cy = (e.clientY - rect.top) * scaleY;
+      if (dist(cx, cy, MUTE_X, MUTE_Y) < MUTE_R) {
+        AM.muted = !AM.muted;
+        localStorage.setItem("cosmicCleanup_muted", AM.muted ? "1" : "0");
+        setMuted(AM.muted);
+      }
+    };
+    canvas.addEventListener("click", onCanvasClick);
+
+    function addScorePopup(x: number, y: number, text: string) {
+      if (s.activePopups.length >= 8) return;
+      const popup: ScorePopup = {
+        x: x + randInt(-25, 25),
+        y: y + randInt(-10, 10),
+        vy: -1.2,
+        text,
+        life: 1,
+        maxLife: 1,
+      };
+      s.scorePopups.push(popup);
+      s.activePopups.push(popup);
+    }
+
+    function updateEnemyTint(e: Enemy) {
+      const hpFrac = e.hp / e.maxHp;
+      if (hpFrac > 0.66) e.tint = null;
+      else if (hpFrac > 0.33) e.tint = "#ff6666";
+      else if (hpFrac > 0) e.tint = "#ff2200";
+    }
+
     function gameLoop(ts: number) {
       const dt = Math.min(ts - s.lastTime, 50);
       s.lastTime = ts;
+      s.frameCount++;
 
       if (s.phase !== "playing") {
         drawFrame(ctx, ts);
@@ -808,16 +999,54 @@ export default function App() {
         s.bullets.push({ x: player.x + player.w * 0.48, y: player.y - player.h * 0.1, vy: -BULLET_SPEED, friendly: true });
       }
 
-      // Spawning
-      s.debrisTimer -= dt;
-      if (s.debrisTimer <= 0 && s.debris.length < MAX_DEBRIS) {
-        s.debrisTimer = DEBRIS_SPAWN_INTERVAL - clamp(s.score * 2, 0, 1200);
-        s.debris.push(spawnDebris(CANVAS_W));
+      // Spawning (pause while boss is alive)
+      if (!s.boss) {
+        s.debrisTimer -= dt;
+        if (s.debrisTimer <= 0 && s.debris.length < MAX_DEBRIS) {
+          s.debrisTimer = DEBRIS_SPAWN_INTERVAL - clamp(s.score * 2, 0, 1200);
+          s.debris.push(spawnDebris(CANVAS_W));
+        }
+        s.enemyTimer -= dt;
+        if (s.enemyTimer <= 0 && s.enemies.length < MAX_ENEMIES && !s.bossSpawned) {
+          s.enemyTimer = ENEMY_SPAWN_INTERVAL - clamp(s.score * 3, 0, 2500);
+          s.enemies.push(spawnEnemy(CANVAS_W, s.score));
+        }
       }
-      s.enemyTimer -= dt;
-      if (s.enemyTimer <= 0 && s.enemies.length < MAX_ENEMIES) {
-        s.enemyTimer = ENEMY_SPAWN_INTERVAL - clamp(s.score * 3, 0, 2500);
-        s.enemies.push(spawnEnemy(CANVAS_W, s.score));
+
+      // Boss spawn trigger
+      if (s.score >= BOSS_SCORE_THRESHOLD && !s.bossSpawned) {
+        s.bossSpawned = true;
+        s.enemies = [];
+        s.boss = {
+          x: CANVAS_W / 2, y: 110,
+          w: 140, h: 110,
+          hp: BOSS_MAX_HP, maxHp: BOSS_MAX_HP,
+          vx: 2.2,
+          fireTimer: 2200,
+          tint: null,
+        };
+      }
+
+      // Boss update
+      if (s.boss) {
+        const boss = s.boss;
+        boss.x += boss.vx;
+        if (boss.x < boss.w / 2 || boss.x > CANVAS_W - boss.w / 2) boss.vx *= -1;
+        boss.fireTimer -= dt;
+        if (boss.fireTimer <= 0) {
+          const hpFrac = boss.hp / boss.maxHp;
+          boss.fireTimer = hpFrac < 0.5 ? 1400 : 2200;
+          const shots = hpFrac < 0.25 ? 7 : hpFrac < 0.5 ? 5 : 3;
+          for (let i = 0; i < shots; i++) {
+            const spread = (i - (shots - 1) / 2) * 0.4;
+            s.bullets.push({
+              x: boss.x + spread * 22,
+              y: boss.y + boss.h / 2,
+              vy: ENEMY_BULLET_SPEED + Math.abs(spread) * 0.3,
+              friendly: false,
+            });
+          }
+        }
       }
 
       // Move bullets
@@ -867,6 +1096,18 @@ export default function App() {
         return p.life > 0;
       });
 
+      // Update score popups
+      s.scorePopups = s.scorePopups.filter(p => {
+        p.y += p.vy;
+        p.life -= 0.018;
+        if (p.life <= 0) {
+          const idx = s.activePopups.indexOf(p);
+          if (idx !== -1) s.activePopups.splice(idx, 1);
+          return false;
+        }
+        return true;
+      });
+
       // Stars scroll
       for (const star of s.stars) {
         star.y += star.speed;
@@ -887,6 +1128,7 @@ export default function App() {
             if (d.hp <= 0) {
               spawnParticles(s.particles, d.x, d.y, "#888", 18, 3.5);
               s.score += 10;
+              addScorePopup(d.x, d.y, "+10");
               s.debris.splice(di, 1);
             }
           }
@@ -900,17 +1142,48 @@ export default function App() {
           if (Math.abs(b.x - e.x) < e.w / 2 && Math.abs(b.y - e.y) < e.h / 2) {
             bulletsToRemove.add(bi);
             e.hp--;
+            updateEnemyTint(e);
+            AM.playHitSound();
             spawnParticles(s.particles, b.x, b.y, e.kind === "brute" ? "#cc44ff" : e.kind === "raider" ? "#ff8800" : "#ff4444", 8, 2.5);
             if (e.hp <= 0) {
               spawnParticles(s.particles, e.x, e.y, "#ff3300", 30, 5);
               spawnParticles(s.particles, e.x, e.y, "#ffaa00", 20, 3.5);
+              AM.playEnemyDestroySound();
               const pts = e.kind === "brute" ? 150 : e.kind === "raider" ? 80 : 50;
               s.score += pts;
+              addScorePopup(e.x, e.y, `+${pts}`);
               s.enemies.splice(ei, 1);
             }
           }
         });
       });
+
+      // Player bullets vs boss
+      if (s.boss) {
+        const boss = s.boss;
+        s.bullets.forEach((b, bi) => {
+          if (!b.friendly) return;
+          if (Math.abs(b.x - boss.x) < boss.w / 2 && Math.abs(b.y - boss.y) < boss.h / 2) {
+            bulletsToRemove.add(bi);
+            boss.hp--;
+            AM.playBossHitSound();
+            spawnParticles(s.particles, b.x, b.y, "#ff2200", 8, 2.5);
+            const hpFrac = boss.hp / boss.maxHp;
+            if (hpFrac <= 0.25) boss.tint = "#ff2200";
+            else if (hpFrac <= 0.5) boss.tint = "#ff6666";
+            else boss.tint = null;
+            if (boss.hp <= 0) {
+              spawnParticles(s.particles, boss.x, boss.y, "#ff3300", 60, 6);
+              spawnParticles(s.particles, boss.x, boss.y, "#ffaa00", 40, 4);
+              spawnParticles(s.particles, boss.x, boss.y, "#ffffff", 30, 5);
+              AM.playBossDeathSound();
+              s.score += 500;
+              addScorePopup(boss.x, boss.y, "+500");
+              s.boss = null;
+            }
+          }
+        });
+      }
 
       // Enemy bullets / debris vs player
       if (player.iframes <= 0) {
@@ -924,6 +1197,7 @@ export default function App() {
             if (player.hp <= 0) {
               spawnParticles(s.particles, player.x, player.y, "#00aaff", 40, 6);
               spawnParticles(s.particles, player.x, player.y, "#ffffff", 20, 4);
+              AM.playGameOverSound();
               s.phase = "dead";
               setPhase("dead");
             }
@@ -940,6 +1214,7 @@ export default function App() {
             s.debris.splice(di, 1);
             if (player.hp <= 0) {
               spawnParticles(s.particles, player.x, player.y, "#00aaff", 40, 6);
+              AM.playGameOverSound();
               s.phase = "dead";
               setPhase("dead");
             }
@@ -957,7 +1232,7 @@ export default function App() {
     }
 
     function drawFrame(ctx: CanvasRenderingContext2D, t: number) {
-      const { player, bullets, debris, enemies, particles, stars, score, phase } = s;
+      const { player, bullets, debris, enemies, particles, stars, score, phase, boss, frameCount } = s;
 
       // Background
       ctx.fillStyle = "#050510";
@@ -1002,8 +1277,40 @@ export default function App() {
       // Debris
       for (const d of debris) drawDebris(ctx, d);
 
-      // Enemies
-      for (const e of enemies) drawEnemyShip(ctx, e, t);
+      // Enemies — with brute charge warning circle
+      for (const e of enemies) {
+        // Brute charge-up warning (brutes are the "bombers" — triple-fire)
+        if (e.kind === "brute") {
+          const chargeWindow = e.fireInterval * 0.4;
+          if (e.fireTimer < chargeWindow) {
+            const chargeFrac = clamp(1 - (e.fireTimer / chargeWindow), 0, 1);
+            ctx.save();
+            ctx.strokeStyle = `rgba(255,255,0,${0.4 + chargeFrac * 0.5})`;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#ffff00";
+            ctx.shadowBlur = 8 * chargeFrac;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, 18 + chargeFrac * 22, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+            // Tint the brute yellow during charge (only if not already hit-tinted)
+            if (!e.tint) e.tint = "#ffff44";
+          } else {
+            // Clear charge tint when not charging (restore hit tint logic)
+            const hpFrac = e.hp / e.maxHp;
+            if (hpFrac > 0.66) e.tint = null;
+            else if (hpFrac > 0.33) e.tint = "#ff6666";
+            else e.tint = "#ff2200";
+          }
+        }
+        drawEnemyShip(ctx, e, t);
+      }
+
+      // Boss
+      if (boss) {
+        drawBossShip(ctx, boss, frameCount);
+      }
 
       // Player bullets (cyan beams)
       for (const b of bullets) {
@@ -1039,6 +1346,55 @@ export default function App() {
         drawPlayerShip(ctx, player.x, player.y, player.w, player.h, player.iframes);
       }
 
+      // ── Score popups ─────────────────────────────────────────────────────────
+      for (const popup of s.scorePopups) {
+        ctx.globalAlpha = clamp(popup.life * 2, 0, 1);
+        ctx.fillStyle = "#ffee44";
+        ctx.shadowColor = "#ffcc00";
+        ctx.shadowBlur = 6;
+        ctx.font = "bold 15px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(popup.text, popup.x, popup.y);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+      }
+
+      // ── Boss HP bar ──────────────────────────────────────────────────────────
+      if (boss) {
+        const barX = CANVAS_W / 2 - 100;
+        const barY = 55;
+        const barW = 200;
+        const barH = 14;
+        const hpFrac = boss.hp / boss.maxHp;
+
+        // Background
+        ctx.fillStyle = "#440000";
+        ctx.fillRect(barX, barY, barW, barH);
+
+        // Foreground (colour shifts with HP)
+        let barColor = "#ff2200";
+        if (hpFrac < 0.5) barColor = "#ff6600";
+        if (hpFrac < 0.25) {
+          barColor = (frameCount % 8 < 4) ? "#ff6600" : "#ffffff";
+        }
+        ctx.fillStyle = barColor;
+        ctx.shadowColor = barColor;
+        ctx.shadowBlur = 6;
+        ctx.fillRect(barX, barY, barW * hpFrac, barH);
+        ctx.shadowBlur = 0;
+
+        // Border
+        ctx.strokeStyle = "#ff4444";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX, barY, barW, barH);
+
+        // Label
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("BOSS", CANVAS_W / 2, barY - 3);
+      }
+
       // ── HUD ─────────────────────────────────────────────────────────────────
       // Score
       ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -1068,6 +1424,13 @@ export default function App() {
       ctx.textAlign = "center";
       ctx.fillText("HULL", CANVAS_W - 80, 37);
 
+      // Mute button (top-right corner, above HP bar area)
+      ctx.font = "18px monospace";
+      ctx.textAlign = "right";
+      ctx.globalAlpha = 0.85;
+      ctx.fillText(AM.muted ? "🔇" : "🔊", MUTE_X + 8, MUTE_Y + 6);
+      ctx.globalAlpha = 1;
+
       // Controls hint — keyboard only, hidden on mobile
       if (!s.isMobile) {
         ctx.globalAlpha = 0.4;
@@ -1083,7 +1446,6 @@ export default function App() {
         const jx = 90, jy = CANVAS_H - 90;
         const baseR = 55, knobR = 22;
 
-        // Outer ring
         ctx.globalAlpha = 0.3;
         ctx.strokeStyle = "#7dfff5";
         ctx.lineWidth = 2;
@@ -1093,7 +1455,6 @@ export default function App() {
         ctx.fill();
         ctx.stroke();
 
-        // Direction arrows
         ctx.globalAlpha = 0.35;
         ctx.fillStyle = "#7dfff5";
         ctx.font = "bold 13px monospace";
@@ -1104,7 +1465,6 @@ export default function App() {
         ctx.fillText("◀", jx - baseR + 6, jy + 5);
         ctx.fillText("▶", jx + baseR - 14, jy + 5);
 
-        // Knob
         const kx = jx + (s.touch.active ? s.touch.knobX : 0);
         const ky = jy + (s.touch.active ? s.touch.knobY : 0);
         ctx.globalAlpha = s.touch.active ? 0.85 : 0.55;
@@ -1121,7 +1481,6 @@ export default function App() {
         ctx.globalAlpha = 0.7;
         ctx.stroke();
 
-        // "DRAG" label
         ctx.globalAlpha = 0.3;
         ctx.fillStyle = "#aaeeff";
         ctx.font = "9px 'Courier New', monospace";
@@ -1149,6 +1508,17 @@ export default function App() {
         ctx.font = "18px 'Courier New', monospace";
         ctx.fillText("Press R to restart", CANVAS_W / 2, CANVAS_H / 2 + 55);
       }
+
+      // Boss warning flash
+      if (s.score >= BOSS_SCORE_THRESHOLD - 50 && !s.boss && !s.bossSpawned) {
+        const warnAlpha = 0.5 + 0.5 * Math.sin(t * 0.01);
+        ctx.globalAlpha = warnAlpha * 0.7;
+        ctx.fillStyle = "#ff2200";
+        ctx.font = "bold 22px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("⚠ BOSS INCOMING ⚠", CANVAS_W / 2, CANVAS_H / 2);
+        ctx.globalAlpha = 1;
+      }
     }
 
     s.lastTime = performance.now();
@@ -1162,6 +1532,7 @@ export default function App() {
     return () => {
       cancelAnimationFrame(s.animFrame);
       window.removeEventListener("keydown", onR);
+      canvas.removeEventListener("click", onCanvasClick);
     };
   }, [resetGame]);
 
@@ -1179,9 +1550,8 @@ export default function App() {
         padding: "24px 16px",
       }}
     >
-      {/* ── Header ───────────────────────────────────────────────────── */}
+      {/* ── Header ───────────────────────────────────────────── */}
       <div style={{ textAlign: "center", marginBottom: 22 }}>
-        {/* Title */}
         <div style={{ marginBottom: 8 }}>
           <span
             style={{
@@ -1198,7 +1568,6 @@ export default function App() {
           </span>
         </div>
 
-        {/* Subtitle */}
         <div style={{ marginBottom: 16 }}>
           <span
             style={{
@@ -1212,7 +1581,6 @@ export default function App() {
           </span>
         </div>
 
-        {/* Divider */}
         <div
           style={{
             width: 320,
@@ -1223,7 +1591,6 @@ export default function App() {
           }}
         />
 
-        {/* Enemy legend */}
         <div style={{ display: "flex", gap: 28, justifyContent: "center", alignItems: "center" }}>
           {[
             { label: "Fighters", color: "#ff5555" },
@@ -1242,7 +1609,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Canvas ───────────────────────────────────────────────────── */}
+      {/* ── Canvas ───────────────────────────────────────────── */}
       <canvas
         ref={canvasRef}
         width={CANVAS_W}
@@ -1255,10 +1622,11 @@ export default function App() {
           display: "block",
           touchAction: "none",
           maxWidth: "100%",
+          cursor: "pointer",
         }}
       />
 
-      {/* ── Restart button ───────────────────────────────────────────── */}
+      {/* ── Restart button ───────────────────────────────────── */}
       {phase === "dead" && (
         <button
           onClick={resetGame}
