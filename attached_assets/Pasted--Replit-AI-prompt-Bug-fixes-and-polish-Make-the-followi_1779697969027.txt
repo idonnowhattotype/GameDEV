@@ -1,0 +1,104 @@
+**Replit AI prompt — Bug fixes and polish**
+
+> Make the following targeted fixes to the existing Cosmic Cleanup Phaser 3 game. Do not break any existing mechanics. Work through each item in order.
+>
+> ---
+>
+> **1. Boss HP bar — create and display it correctly**
+>
+> In `_spawnBoss()`, after the boss sprite is created, build the HP bar using the Phaser Graphics API:
+> - Create `this._bossHpBarBg` as a Graphics object. Draw a filled rectangle at position `(this.scale.width/2 - 100, 55)`, width 200, height 14, fill colour `#440000`. Set depth 95.
+> - Create `this._bossHpBarFg` as a separate Graphics object at the same position. Set depth 96.
+> - Create `this._bossHpLbl` as a text object reading `BOSS` in 11px bold white Courier New, positioned centred above the bar at `(this.scale.width/2, 50)`. Set depth 97. Set origin to `(0.5, 1)`.
+> - Set all three to `setScrollFactor(0)` so they stay fixed to the camera.
+> - Set all three to `setAlpha(1)` on spawn.
+> - In `_updateBoss()`, every frame redraw `_bossHpBarFg`: clear it, then fill a rectangle of width `200 * (this._bossExtra.hp / this._bossExtra.maxHp)` at the same position, colour `#ff2200`. When boss HP is below 50%, change the fill colour to `#ff6600` to signal enrage. When boss HP is below 25%, flash the bar by alternating between `#ff6600` and `#ffffff` every 8 frames using `this._frameCount % 8 < 4`.
+> - In `_killBoss()`, set all three to `setAlpha(0)` and then `destroy()` them.
+> - If `_bossHpBarBg`, `_bossHpBarFg`, or `_bossHpLbl` are already partially implemented, remove the old implementation entirely and replace with this one.
+>
+> ---
+>
+> **2. Enemy HP colour feedback**
+>
+> Add a method `_updateEnemyTint(ext)` that is called every time an enemy takes a hit. Inside it:
+> - Calculate `hpFrac = ext.hp / this._cfg.enemyHp`.
+> - If `hpFrac > 0.66`: call `ext.sprite.clearTint()`.
+> - If `hpFrac <= 0.66` and `> 0.33`: call `ext.sprite.setTint(0xff6666)`.
+> - If `hpFrac <= 0.33` and `> 0`: call `ext.sprite.setTint(0xff2200)`.
+> - If `hpFrac <= 0` (dead): no action needed, sprite is destroyed.
+> - Call `_updateEnemyTint(ext)` inside `_bulletHitSat()` immediately after decrementing `ext.hp`, before the death check.
+> - Also apply the same logic to the boss in `_bulletHitBoss()`: at 50% HP tint `0xff6666`, at 25% HP tint `0xff2200`.
+>
+> ---
+>
+> **3. Bomber charge-up warning**
+>
+> In `_updateSatellites()`, find where the bomber's drop timer is decremented. Add the following:
+> - When `ext.bomberTimer` drops below 1.5 seconds, set a flag `ext.charging = true`.
+> - In the `update()` loop where `_fxGfx` is drawn each frame, check all satellite extras. For any `ext` where `ext.charging === true` and `ext.sprite.active`:
+>   - Calculate charge progress: `chargeFrac = 1 - (ext.bomberTimer / 1.5)` clamped 0–1.
+>   - Draw an expanding circle around the bomber: `this._fxGfx.lineStyle(2, 0xffff00, 0.7)` then `this._fxGfx.strokeCircle(ext.sprite.x, ext.sprite.y, 10 + chargeFrac * 16)`.
+>   - Also tint the bomber sprite `0xffff44` during charge and clear the tint immediately after it drops.
+> - Reset `ext.charging = false` after the bomber drops.
+>
+> ---
+>
+> **4. Fix score pop-up stacking**
+>
+> Find every place in the code where a floating score text is created (search for `this.add.text` combined with `tweens.add` and a `y` tween — these are the pop-ups). For each one:
+> - Add `+ Phaser.Math.Between(-25, 25)` to the x spawn position.
+> - Add `+ Phaser.Math.Between(-10, 10)` to the y spawn position.
+> - Before spawning, count active pop-up objects. Track them in an array `this._activePopups = []`. Push each new pop-up into the array on creation and splice it out in the tween's `onComplete`. If `this._activePopups.length >= 8`, skip spawning the new pop-up entirely.
+>
+> ---
+>
+> **5. Remove particle emitter conflict with drawn flame**
+>
+> Find `this._thruster` — the Phaser particle emitter created in `create()`. Remove it entirely:
+> - Delete the `this._thruster = this.add.particles(...)` creation line.
+> - Delete the `this._thruster.setPosition(...)` and `this._thruster.explode(3)` calls inside `_handleInput()`.
+> - The drawn flame ellipses in `_drawFlame()` already handle all thrust visuals. The particle emitter is redundant and causes visual overlap.
+>
+> ---
+>
+> **6. Mobile controls — only show on touch devices, never on desktop**
+>
+> Add a boolean at the top of `GameScene.create()`:
+> ```javascript
+> this._isMobile = this.sys.game.device.input.touch;
+> ```
+>
+> Apply this flag everywhere touch UI is rendered or processed:
+>
+> - In `_drawTouchUI()`: wrap the entire function body in `if (!this._isMobile) return;`. This stops the joystick, fire button, and dash button from drawing on desktop.
+> - In the `pointerdown` handler: wrap the joystick assignment block and the dash button check in `if (this._isMobile)`. On desktop, pointer input should do nothing — keyboard handles everything.
+> - In `_handleInput()`: the `touchFiring` variable checks pointer positions for the fire zone. Wrap it in `if (this._isMobile)` — on desktop set `touchFiring = false` unconditionally so the touch fire zone cannot accidentally trigger from mouse clicks.
+> - In `update()`, the `_touchGfx` clear call can remain, but `_drawTouchUI()` will return early on desktop so nothing is drawn.
+> - The joystick delta (`this._joyDelta`) must also be zeroed out on desktop — add `if (!this._isMobile) { this._joyDelta = { x:0, y:0 }; }` at the top of `_handleInput()`.
+>
+> On mobile, all touch controls remain fully functional as they currently are. On desktop, they are completely invisible and inactive.
+>
+> ---
+>
+> **7. Mute button**
+>
+> Add `this.muted = false` as a property on `AudioManager` at construction.
+>
+> At the very top of every sound-playing method in `AudioManager` (`_tone`, `playMenuMusic`, `playGameMusic`, `playRocketBoostSound`, `playHitSound`, `playEnemyDestroySound`, `playDashSound`, `playFreezeSound`, `playEMPSound`, `playBossHitSound`, `playBossDeathSound`, `playEnemyShootSound`, `playShootSound`, `playSpeedSound`, `playIntroSound`, `playLevelCompleteSound`, `playGameOverSound`, `playPowerUpSound`), add:
+> ```javascript
+> if (this.muted) return;
+> ```
+>
+> In `GameScene._buildHUD()`, add a mute toggle text object:
+> - Position: top-right corner, x = `this.scale.width - 14`, y = 14, origin `(1, 0)`.
+> - Initial text: `🔊`.
+> - Font: 18px, depth 100, `setScrollFactor(0)`, `setInteractive({ useHandCursor: true })`.
+> - On `pointerdown`: toggle `AM.muted`. If now muted: set text to `🔇`, call `AM.stopMusic()`. If now unmuted: set text to `🔊`, call `AM.playGameMusic()`.
+> - Store mute state in localStorage: `localStorage.setItem('cosmicCleanup_muted', AM.muted ? '1' : '0')`.
+> - On `AudioManager` construction, read: `this.muted = localStorage.getItem('cosmicCleanup_muted') === '1'`.
+>
+> Also add the same mute button to `MenuScene`, calling `AM.playMenuMusic()` on unmute instead of `playGameMusic()`.
+>
+> ---
+>
+> Zero console errors after all changes. All five levels and the boss fight must work correctly. Test that on a desktop browser the touch joystick and fire/dash buttons are completely invisible.
